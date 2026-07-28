@@ -6,7 +6,7 @@
 <title>SPIROKRAFT</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500&family=Dancing+Script:wght@600;700&display=swap" rel="stylesheet">
 <style>
 /* ================= SPIROKRAFT design tokens ================= */
 :root{
@@ -190,6 +190,21 @@ input[type=number]:focus{border-color:var(--accent)}
 .sw[aria-pressed="true"]::after{content:'';position:absolute;inset:-5px;border:1px solid var(--accent);border-radius:50%}
 .ratio{font-family:var(--mono);font-size:9px;letter-spacing:.12em;color:var(--ink-faint);text-align:right;margin-top:2px}
 
+/* preset chips + text controls */
+.chips{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}
+.chip{height:36px;border-radius:9px;background:rgba(255,255,255,.05);border:1px solid var(--hairline);
+  font-family:var(--mono);font-size:9px;letter-spacing:.18em;color:var(--ink-dim);
+  transition:background .2s,color .2s,border-color .2s}
+.chip:hover{background:rgba(255,255,255,.1);color:var(--ink)}
+.chip:active{background:rgba(110,164,196,.16);color:var(--accent)}
+@media (pointer:coarse){ .chip{height:42px} }
+.textin{flex:1;height:32px;background:rgba(255,255,255,.05);border:1px solid var(--hairline);
+  border-radius:8px;font-family:var(--disp);font-size:14px;color:var(--ink);padding:0 11px}
+.textin:focus{border-color:var(--accent)}
+.textin::placeholder{color:var(--ink-faint)}
+#writebtn{width:100%;height:40px;color:var(--accent);border-color:rgba(110,164,196,.4);letter-spacing:.22em}
+#writebtn:hover{background:rgba(110,164,196,.16)}
+
 /* ================= toast & shortcuts ================= */
 #toast{
   position:fixed;z-index:30;top:calc(env(safe-area-inset-top) + 60px);left:50%;transform:translateX(-50%) translateY(-6px);
@@ -288,6 +303,12 @@ kbd{font-family:var(--mono);font-size:10px;background:rgba(255,255,255,.07);bord
   <button class="dockbtn" data-panel="speed" aria-expanded="false" aria-label="Speed and motion">
     <svg viewBox="0 0 24 24"><path d="M4 15a8 8 0 0 1 16 0"/><path d="m12 15 4.5-5"/><circle cx="12" cy="15" r="1.2"/></svg>
     <span>SPEED</span></button>
+  <button class="dockbtn" data-panel="preset" aria-expanded="false" aria-label="Presets">
+    <svg viewBox="0 0 24 24"><path d="M12 3l2.1 4.9L19 9.6l-3.6 3.3.9 5.1L12 15.6 7.7 18l.9-5.1L5 9.6l4.9-.7Z"/></svg>
+    <span>STYLE</span></button>
+  <button class="dockbtn" data-panel="text" aria-expanded="false" aria-label="Write text">
+    <svg viewBox="0 0 24 24"><path d="M5 7V5h14v2M12 5v14M9 19h6"/></svg>
+    <span>TEXT</span></button>
   <div class="dockdiv"></div>
   <button class="dockbtn" id="playbtn" aria-label="Start automatic drawing" aria-pressed="false">
     <svg id="playicon" viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5Z"/></svg>
@@ -351,6 +372,37 @@ kbd{font-family:var(--mono);font-size:10px;background:rgba(255,255,255,.07);bord
         <button data-dir="1" aria-pressed="true">CW</button>
         <button data-dir="-1" aria-pressed="false">CCW</button>
       </div></div>
+    <div class="row"><label>LOOP</label>
+      <div class="miniseg" id="loopseg">
+        <button data-loop="0" aria-pressed="true">OFF</button>
+        <button data-loop="1" aria-pressed="false">ON</button>
+      </div></div>
+  </div>
+  <!-- PRESETS -->
+  <div data-view="preset" hidden>
+    <div class="ptitle">PRESETS</div>
+    <div class="chips" id="presetchips">
+      <button class="chip" data-preset="orbit">ORBIT</button>
+      <button class="chip" data-preset="rosette">ROSETTE</button>
+      <button class="chip" data-preset="halo">HALO</button>
+      <button class="chip" data-preset="lattice">LATTICE</button>
+      <button class="chip" data-preset="bloom">BLOOM</button>
+      <button class="chip" data-preset="eclipse">ECLIPSE</button>
+      <button class="chip" data-preset="current">CURRENT</button>
+      <button class="chip" data-preset="drift">DRIFT</button>
+    </div>
+    <div class="ratio">GEAR RELATIONSHIPS · TAP TO LOAD</div>
+  </div>
+  <!-- TEXT -->
+  <div data-view="text" hidden>
+    <div class="ptitle">WRITE IN SCRIPT</div>
+    <div class="row"><label for="txt-in">WORDS</label>
+      <input type="text" id="txt-in" class="textin" maxlength="24" value="hello" placeholder="type…" aria-label="Text to write" autocomplete="off"></div>
+    <div class="row"><label for="in-ts">SIZE</label>
+      <input type="range" id="in-ts" min="120" max="700" step="10" value="320">
+      <input type="number" id="num-ts" min="120" max="700" step="10" value="320" aria-label="Text size"><output id="out-ts">320</output></div>
+    <div class="row"><button id="writebtn" class="chip">WRITE IT</button></div>
+    <div class="ratio">EXPERIMENTAL · SPIRALS ALONG EACH LETTER · TIGHT GEARS READ BEST</div>
   </div>
 </div>
 
@@ -408,10 +460,24 @@ const S = {
   R:96, r:33, d:24,
   dir:1, speed:1, smooth:0.55,
   pathSpeed:110,          // world units/sec the mechanism travels along a guide path
+  loop:false,             // continuous tracing along a path
+  textSize:320,           // world height of written script text
   pen:{ color:'#e8e6e1', width:1.1, opacity:0.9 },
   showGears:true,
   autoRunning:false,
   anchor:{x:0,y:0},       // world pos of mechanism when idle / auto
+};
+
+/* ---------------- Presets (gear relationships + behaviour) ---------------- */
+const PRESETS = {
+  orbit:   {curve:'hypo', R:120, r:40, d:40, dir: 1, speed:1.0, color:'#e8e6e1'},
+  rosette: {curve:'hypo', R:150, r:44, d:70, dir: 1, speed:1.2, color:'#6ea4c4'},
+  halo:    {curve:'epi',  R:110, r:22, d:18, dir: 1, speed:1.0, color:'#c4a46e'},
+  lattice: {curve:'hypo', R:180, r:53, d:22, dir:-1, speed:1.4, color:'#9a8fb8'},
+  bloom:   {curve:'epi',  R:90,  r:30, d:58, dir: 1, speed:1.0, color:'#c4a46e'},
+  eclipse: {curve:'hypo', R:160, r:80, d:78, dir: 1, speed:0.8, color:'#e8e6e1'},
+  current: {curve:'hypo', R:140, r:35, d:12, dir: 1, speed:1.6, color:'#7d8a80'},
+  drift:   {curve:'epi',  R:130, r:29, d:44, dir:-1, speed:1.0, color:'#9a8fb8'},
 };
 
 /* ---------------- Viewport (world <-> screen) ---------------- */
@@ -647,12 +713,14 @@ const History = {
   undo(){
     const c=this.undoStack.pop(); if(!c) return;
     if(c.type==='stroke'){ Strokes.list.pop(); }
+    else if(c.type==='strokes'){ Strokes.list.length=Math.max(0,Strokes.list.length-c.strokes.length); }
     else if(c.type==='clear'){ Strokes.list.push(...c.strokes); }
     this.redoStack.push(c); Renderer.repaintAll(); UI.syncHistory();
   },
   redo(){
     const c=this.redoStack.pop(); if(!c) return;
     if(c.type==='stroke'){ Strokes.list.push(c.stroke); }
+    else if(c.type==='strokes'){ Strokes.list.push(...c.strokes); }
     else if(c.type==='clear'){ Strokes.list.length=0; }
     this.undoStack.push(c); Renderer.repaintAll(); UI.syncHistory();
   },
@@ -688,14 +756,16 @@ const Session = {
       this.stroke.pts.push(p.x,p.y);
     }
   },
-  end(){
+  end(collector){
     if(!this.live) return;
     this.live=false;
     Renderer.paintIncrement();
     Renderer.endActive();
     const st=this.stroke; this.stroke=null;
-    if(st.pts.length>=8){ History.push({type:'stroke', stroke:st}); }
-    else { Strokes.list.pop(); Renderer.repaintAll(); }
+    if(st.pts.length>=8){
+      if(collector) collector.push(st);           // grouped (e.g. a written word)
+      else History.push({type:'stroke', stroke:st});
+    }else{ Strokes.list.pop(); Renderer.repaintAll(); }
   }
 };
 
@@ -874,98 +944,206 @@ const Auto = {
   }
 };
 
-/* ---------------- Guide path (free-path mode) ----------------
-   The user draws a guide curve; the mechanism later travels along it,
-   arc-length parameterised, with a smoothed tangent so orientation
-   follows the direction of travel without sudden jumps.            */
+/* ---------------- Guide path ----------------
+   A guide is an arc-length-parameterised curve with a smoothed tangent so
+   the mechanism's orientation follows the direction of travel without
+   sudden jumps. buildGuideData() turns raw point arrays into that form;
+   both hand-drawn paths and generated text glyphs are guides.        */
+function resamplePts(xs, ys, step){
+  // even arc-length resample of a polyline given as parallel xs/ys arrays
+  if(xs.length<2) return {xs:xs.slice(), ys:ys.slice()};
+  const ox=[xs[0]], oy=[ys[0]];
+  let px=xs[0], py=ys[0], carry=step;
+  for(let i=1;i<xs.length;i++){
+    const dx=xs[i]-px, dy=ys[i]-py, seg=Math.hypot(dx,dy);
+    if(seg===0) continue;
+    const ux=dx/seg, uy=dy/seg; let d=carry;
+    while(d<=seg){ ox.push(px+ux*d); oy.push(py+uy*d); d+=step; }
+    carry=d-seg; px=xs[i]; py=ys[i];
+  }
+  ox.push(xs[xs.length-1]); oy.push(ys[ys.length-1]);
+  return {xs:ox, ys:oy};
+}
+function buildGuideData(xs, ys){
+  if(!xs || xs.length<2) return null;
+  const cum=[0];
+  for(let i=1;i<xs.length;i++) cum.push(cum[i-1]+Math.hypot(xs[i]-xs[i-1], ys[i]-ys[i-1]));
+  const total=cum[cum.length-1];
+  if(!(total>1)) return null;
+  const angs=[], W=2;
+  for(let i=0;i<xs.length;i++){
+    const a=Math.max(0,i-W), b=Math.min(xs.length-1,i+W);
+    angs.push(Math.atan2(ys[b]-ys[a], xs[b]-xs[a]));
+  }
+  return {
+    xs, ys, cum, angs, total,
+    sampleAt(dist){
+      dist=clamp(dist,0,total);
+      let lo=1, hi=cum.length-1;
+      while(lo<hi){ const mid=(lo+hi)>>1; if(cum[mid]<dist) lo=mid+1; else hi=mid; }
+      const i=lo, seg=cum[i]-cum[i-1] || 1, f=(dist-cum[i-1])/seg;
+      let da=angs[i]-angs[i-1]; while(da>Math.PI)da-=TAU; while(da<-Math.PI)da+=TAU;
+      return { x:lerp(xs[i-1],xs[i],f), y:lerp(ys[i-1],ys[i],f), ang:angs[i-1]+da*f };
+    }
+  };
+}
+
+// Hand-drawn guide capture buffer → one guide-data object.
 const Guide = {
-  raw:[],                       // captured world points during draw
-  xs:[], ys:[], angs:[], cum:[], total:0,
-  step:3,                       // resample spacing (world units)
-  reset(){ this.raw=[]; this.xs=[]; this.ys=[]; this.angs=[]; this.cum=[]; this.total=0; },
+  raw:[], data:null, step:3,
+  reset(){ this.raw=[]; this.data=null; },
   addRaw(x,y){
     const n=this.raw.length;
     if(n){ const dx=x-this.raw[n-1].x, dy=y-this.raw[n-1].y; if(dx*dx+dy*dy < 1) return; }
     this.raw.push({x,y});
   },
-  ready(){ return this.total>1 && this.xs.length>1; },
+  ready(){ return !!this.data; },
   build(){
-    const r=this.raw;
-    if(r.length<2){ this.reset(); return false; }
-    // resample to even arc-length spacing
-    const xs=[r[0].x], ys=[r[0].y];
-    let prev=r[0], carry=this.step;
-    for(let i=1;i<r.length;i++){
-      const cur=r[i], sdx=cur.x-prev.x, sdy=cur.y-prev.y;
-      const seg=Math.hypot(sdx,sdy);
-      if(seg===0){ prev=cur; continue; }
-      const ux=sdx/seg, uy=sdy/seg;
-      let d=carry;
-      while(d<=seg){ xs.push(prev.x+ux*d); ys.push(prev.y+uy*d); d+=this.step; }
-      carry=d-seg; prev=cur;
-    }
-    const last=r[r.length-1];
-    if(xs[xs.length-1]!==last.x || ys[ys.length-1]!==last.y){ xs.push(last.x); ys.push(last.y); }
-    // cumulative arc length + smoothed tangents
-    const cum=[0];
-    for(let i=1;i<xs.length;i++) cum.push(cum[i-1]+Math.hypot(xs[i]-xs[i-1], ys[i]-ys[i-1]));
-    const angs=[], W=2;
-    for(let i=0;i<xs.length;i++){
-      const a=Math.max(0,i-W), b=Math.min(xs.length-1,i+W);
-      angs.push(Math.atan2(ys[b]-ys[a], xs[b]-xs[a]));
-    }
-    this.xs=xs; this.ys=ys; this.cum=cum; this.angs=angs; this.total=cum[cum.length-1];
-    return this.total>1;
+    if(this.raw.length<2){ this.reset(); return false; }
+    const rs=resamplePts(this.raw.map(p=>p.x), this.raw.map(p=>p.y), this.step);
+    this.data=buildGuideData(rs.xs, rs.ys);
+    return !!this.data;
   },
-  sampleAt(dist){
-    const {xs,ys,cum,angs,total}=this;
-    if(xs.length<2) return null;
-    dist=clamp(dist,0,total);
-    let lo=1, hi=cum.length-1;
-    while(lo<hi){ const mid=(lo+hi)>>1; if(cum[mid]<dist) lo=mid+1; else hi=mid; }
-    const i=lo;
-    const seg=cum[i]-cum[i-1] || 1;
-    const f=(dist-cum[i-1])/seg;
-    let da=angs[i]-angs[i-1]; while(da>Math.PI)da-=TAU; while(da<-Math.PI)da+=TAU;
-    return { x:lerp(xs[i-1],xs[i],f), y:lerp(ys[i-1],ys[i],f), ang:angs[i-1]+da*f };
+  // overlay accessors
+  get xs(){ return this.data?this.data.xs:[]; },
+  get ys(){ return this.data?this.data.ys:[]; },
+  sampleAt(d){ return this.data?this.data.sampleAt(d):null; },
+  get total(){ return this.data?this.data.total:0; }
+};
+
+/* ---------------- Text → guide paths (script-font writing) ----------------
+   Rasterise words in a cursive font, trace every glyph contour, and turn
+   each into a guide the mechanism can spiral along.                    */
+function traceContours(bin, W, H){
+  const at=(x,y)=> (x<0||y<0||x>=W||y>=H)?0:bin[y*W+x];
+  const nb=[[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]]; // CW from East
+  const seen=new Uint8Array(W*H);
+  const contours=[];
+  const maxSteps=W*H*4;
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+    if(!at(x,y) || at(x-1,y) || seen[y*W+x]) continue; // left edge of an unseen region
+    const contour=[]; let px=x, py=y, bx=x-1, by=y, steps=0;
+    do{
+      contour.push([px,py]); seen[py*W+px]=1;
+      let di=0; for(let k=0;k<8;k++){ if(px+nb[k][0]===bx && py+nb[k][1]===by){ di=k; break; } }
+      let found=false;
+      for(let k=1;k<=8;k++){
+        const idx=(di+k)&7, nx=px+nb[idx][0], ny=py+nb[idx][1];
+        if(at(nx,ny)){ const p=(di+k-1)&7; bx=px+nb[p][0]; by=py+nb[p][1]; px=nx; py=ny; found=true; break; }
+      }
+      if(!found) break;
+    }while(!(px===x && py===y) && ++steps<maxSteps);
+    if(contour.length>=10) contours.push(contour);
+  }
+  return contours;
+}
+const Text = {
+  family:'"Dancing Script", "Segoe Script", cursive',
+  async guides(str, worldHeight){
+    str=(str||'').trim(); if(!str) return [];
+    const fpx=200, pad=Math.ceil(fpx*0.6);
+    try{ await document.fonts.load(`700 ${fpx}px ${this.family}`); await document.fonts.ready; }catch(e){}
+    const meas=document.createElement('canvas').getContext('2d');
+    meas.font=`700 ${fpx}px ${this.family}`;
+    const m=meas.measureText(str);
+    const asc=m.actualBoundingBoxAscent||fpx*0.8, desc=m.actualBoundingBoxDescent||fpx*0.35;
+    const w=Math.ceil(m.width)+pad*2, h=Math.ceil(asc+desc)+pad*2;
+    const cn=document.createElement('canvas'); cn.width=w; cn.height=h;
+    const cx=cn.getContext('2d');
+    cx.fillStyle='#000'; cx.fillRect(0,0,w,h);
+    cx.fillStyle='#fff'; cx.font=`700 ${fpx}px ${this.family}`; cx.textBaseline='alphabetic';
+    cx.fillText(str, pad, pad+asc);
+    const data=cx.getImageData(0,0,w,h).data;
+    const bin=new Uint8Array(w*h);
+    for(let i=0,p=0;i<bin.length;i++,p+=4) bin[i]= data[p]>128?1:0;
+    const contours=traceContours(bin,w,h);
+    if(!contours.length) return [];
+    const scale=(worldHeight||300)/(asc+desc);
+    const halfW=w/2, halfH=h/2;
+    const ox=V.cam.x, oy=V.cam.y;   // land the text at the current view centre
+    const guides=[];
+    for(const c of contours){
+      const xs=c.map(p=>(p[0]-halfW)*scale+ox);
+      const ys=c.map(p=>(p[1]-halfH)*scale+oy);
+      xs.push(xs[0]); ys.push(ys[0]);               // close the loop
+      const rs=resamplePts(xs, ys, 3);
+      const gd=buildGuideData(rs.xs, rs.ys);
+      if(gd && gd.total>6) guides.push(gd);
+    }
+    return guides;
   }
 };
 
-/* ---------------- Path traversal (mechanism spirals along the guide) ---- */
+/* ---------------- Path traversal (mechanism spirals along a guide) ------
+   Traces the hand-drawn guide (with optional LOOP) or a queue of guides
+   generated from text (grouped into one undo step).                   */
 const Path = {
   running:false, dist:0, lastT:0,
+  g:null, queue:[], group:null,
   canRun(){ return Guide.ready(); },
-  start(){
+  begin(g){
+    this.g=g; this.dist=0; this.running=true; this.lastT=performance.now();
+    const s0=g.sampleAt(0);
+    Session.begin(s0.x,s0.y,s0.ang);
+  },
+  start(){                                   // hand-drawn single path (honours LOOP)
     if(this.running) return;
     if(!this.canRun()){ UI.toast('DRAW A PATH FIRST'); return; }
-    this.running=true; this.dist=0; this.lastT=performance.now();
-    const s0=Guide.sampleAt(0);
-    Session.begin(s0.x,s0.y,s0.ang);
+    this.queue=[]; this.group=null;
+    this.begin(Guide);
+    UI.syncPlay();
+  },
+  trace(guides){                             // text: sequence of guides, grouped undo
+    if(this.running) this.stop();
+    if(!guides || !guides.length) return;
+    this.queue=guides.slice(); this.group=[];
+    this.begin(this.queue.shift());
     UI.syncPlay();
   },
   stop(){
     if(!this.running) return;
     this.running=false;
-    Session.end();
+    Session.end(this.group||undefined);
+    if(this.group && this.group.length) History.push({type:'strokes', strokes:this.group.slice()});
+    this.queue=[]; this.group=null; this.g=null;
     UI.syncPlay();
   },
+  onSegmentEnd(){
+    if(this.queue.length){                   // text: move to next glyph contour
+      Session.end(this.group);
+      this.begin(this.queue.shift());
+      return;
+    }
+    if(this.group){                          // text finished
+      Session.end(this.group);
+      if(this.group.length) History.push({type:'strokes', strokes:this.group.slice()});
+      this.running=false; this.group=null; this.g=null;
+      UI.syncPlay(); UI.toast('WRITTEN');
+      return;
+    }
+    if(S.loop){                              // continuous tracing of a hand path
+      this.dist=0;
+      if(Session.stroke && Session.stroke.pts.length>240000){ this.stop(); UI.toast('LOOP CAP'); }
+      return;
+    }
+    this.stop(); UI.toast('PATH COMPLETE');
+  },
   tick(now){
-    if(!this.running) return;
+    if(!this.running || !this.g) return;
     const dtSec=Math.min((now-this.lastT)/1000,0.05);
     this.lastT=now;
     const travel=S.pathSpeed*dtSec;
     if(travel<=0) return;
-    // sub-step along the path so both travel and spin stay smooth
     const sub=clamp(Math.ceil(travel/2),1,60), step=travel/sub;
     for(let k=0;k<sub;k++){
       this.dist+=step;
-      const smp=Guide.sampleAt(this.dist);
+      const reachedEnd=this.dist>=this.g.total;
+      const smp=this.g.sampleAt(reachedEnd?this.g.total:this.dist);
       Session.cx=smp.x; Session.cy=smp.y; Session.ang=smp.ang;
-      // roll: rotation advances with distance travelled (rate-independent)
-      Session.advance(S.dir*S.speed*step/(S.r*0.9));
-      if(this.dist>=Guide.total) break;
+      Session.advance(S.dir*S.speed*step/(S.r*0.9)); // roll with distance travelled
+      if(reachedEnd) break;
     }
-    if(this.dist>=Guide.total){ this.stop(); UI.toast('PATH COMPLETE'); }
+    if(this.dist>=this.g.total) this.onSegmentEnd();
   }
 };
 
@@ -1040,6 +1218,24 @@ const UI = {
     this.bind('sp',v=>{ S.speed=v; });
     this.bind('sm',v=>{ S.smooth=v; });
     this.bind('fl',v=>{ S.pathSpeed=v; });
+    this.bind('ts',v=>{ S.textSize=v; });
+
+    // loop toggle
+    document.querySelectorAll('#loopseg button').forEach(b=>{
+      b.onclick=()=>{
+        S.loop=b.dataset.loop==='1';
+        document.querySelectorAll('#loopseg button').forEach(x=>x.setAttribute('aria-pressed',x===b));
+        this.haptic();
+      };
+    });
+
+    // presets
+    document.querySelectorAll('#presetchips .chip').forEach(b=>{
+      b.onclick=()=>this.applyPreset(b.dataset.preset);
+    });
+
+    // write text in a script font
+    this.$('writebtn').onclick=()=>this.writeText();
 
     // curve + direction segments
     document.querySelectorAll('#curveseg button').forEach(b=>{
@@ -1091,6 +1287,39 @@ const UI = {
     document.body.classList.toggle('focusmode', on);
     this.$('focusbtn').setAttribute('aria-pressed', on);
     if(on && this.panelOpen) this.closePanel();
+  },
+
+  // presets define gear relationships + behaviour, not just colour
+  applyPreset(name){
+    const p=PRESETS[name]; if(!p) return;
+    this.haptic();
+    // curve first so the R/r coupling guard behaves
+    S.curve=p.curve;
+    document.querySelectorAll('#curveseg button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.curve===p.curve));
+    this.setVal('R',p.R); this.setVal('r',p.r); this.setVal('d',p.d);
+    this.setVal('sp',p.speed);
+    S.dir=p.dir;
+    document.querySelectorAll('#dirseg button').forEach(x=>x.setAttribute('aria-pressed',+x.dataset.dir===p.dir));
+    if(p.color){
+      S.pen.color=p.color;
+      document.querySelectorAll('.sw').forEach(x=>x.setAttribute('aria-pressed',x.dataset.c===p.color));
+    }
+    this.syncGearTags();
+    this.toast(name.toUpperCase());
+  },
+
+  async writeText(){
+    const btn=this.$('writebtn');
+    const str=this.$('txt-in').value;
+    if(!str.trim()){ this.toast('TYPE SOMETHING FIRST'); return; }
+    this.haptic();
+    btn.textContent='WRITING…'; btn.disabled=true;
+    let guides=[];
+    try{ guides=await Text.guides(str, S.textSize); }catch(e){ guides=[]; }
+    btn.textContent='WRITE IT'; btn.disabled=false;
+    if(!guides.length){ this.toast('COULD NOT TRACE TEXT'); return; }
+    this.dismissHint();
+    Path.trace(guides);
   },
 
   setMode(m){
@@ -1204,7 +1433,7 @@ function frame(now){
   if(Session.live) Renderer.paintIncrement();
   // live layer: clear once, draw the guide beneath the mechanism readout
   Renderer.clearOverlay();
-  if(S.mode==='path' || Path.running) Renderer.drawGuide();
+  if(S.mode==='path') Renderer.drawGuide();
   if(Session.live) Renderer.overlay(Session.t,Session.cx,Session.cy,Session.ang,true);
   else Renderer.overlay(Session.t,S.anchor.x,S.anchor.y,Session.ang,true);
   requestAnimationFrame(frame);
