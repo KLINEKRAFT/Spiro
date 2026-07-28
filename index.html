@@ -225,9 +225,10 @@ kbd{font-family:var(--mono);font-size:10px;background:rgba(255,255,255,.07);bord
 
 @media (max-width:560px){
   #mark{display:none}
-  #modes{left:14px;transform:none}
+  #modes{left:12px;transform:none}
   body.focusmode #modes{transform:translateY(4px)}
-  .seg{min-width:52px;padding:0 10px}
+  .seg{min-width:44px;padding:0 7px}
+  #actions{right:12px}
   #zoomer{display:none}
   #dock{width:calc(100vw - 20px);bottom:calc(env(safe-area-inset-bottom) + 14px)}
   .dockbtn{flex:1;min-width:0}
@@ -261,6 +262,7 @@ kbd{font-family:var(--mono);font-size:10px;background:rgba(255,255,255,.07);bord
 
 <div class="chrome glass" id="modes" role="group" aria-label="Drawing mode">
   <button class="seg" id="mode-draw" aria-pressed="true">DRAW</button>
+  <button class="seg" id="mode-path" aria-pressed="false">PATH</button>
   <button class="seg" id="mode-auto" aria-pressed="false">AUTO</button>
 </div>
 
@@ -341,6 +343,9 @@ kbd{font-family:var(--mono);font-size:10px;background:rgba(255,255,255,.07);bord
     <div class="row"><label for="in-sm">SMOOTH</label>
       <input type="range" id="in-sm" min="0" max="1" step="0.05" value="0.55">
       <input type="number" id="num-sm" min="0" max="1" step="0.05" value="0.55" aria-label="Input smoothing"><output id="out-sm">0.55</output></div>
+    <div class="row"><label for="in-fl">FOLLOW</label>
+      <input type="range" id="in-fl" min="20" max="400" step="5" value="110">
+      <input type="number" id="num-fl" min="20" max="400" step="5" value="110" aria-label="Path follow speed"><output id="out-fl">110</output></div>
     <div class="row"><label>DIRECTION</label>
       <div class="miniseg" id="dirseg">
         <button data-dir="1" aria-pressed="true">CW</button>
@@ -398,10 +403,11 @@ const lerp = (a,b,t)=>a+(b-a)*t;
 
 /* ---------------- State ---------------- */
 const S = {
-  mode:'draw',            // draw | auto
+  mode:'draw',            // draw | path | auto
   curve:'hypo',           // hypo | epi
   R:96, r:33, d:24,
   dir:1, speed:1, smooth:0.55,
+  pathSpeed:110,          // world units/sec the mechanism travels along a guide path
   pen:{ color:'#e8e6e1', width:1.1, opacity:0.9 },
   showGears:true,
   autoRunning:false,
@@ -543,10 +549,38 @@ const Renderer = {
   },
   endActive(){ this.active=null; },
 
+  /* dashed guide path for free-path mode (caller clears the live layer) */
+  drawGuide(){
+    const capturing = Input.pathing && Guide.raw.length>1;
+    if(!capturing && Guide.xs.length<2) return;
+    V.apply(liveX);
+    liveX.save();
+    liveX.lineWidth=Math.max(1.1,1.4/V.zoom);
+    liveX.lineCap='round'; liveX.lineJoin='round';
+    liveX.setLineDash([6/V.zoom, 5/V.zoom]);
+    liveX.strokeStyle=Path.running ? 'rgba(110,164,196,.28)' : 'rgba(110,164,196,.55)';
+    liveX.beginPath();
+    if(capturing){
+      liveX.moveTo(Guide.raw[0].x,Guide.raw[0].y);
+      for(let i=1;i<Guide.raw.length;i++) liveX.lineTo(Guide.raw[i].x,Guide.raw[i].y);
+      liveX.stroke();
+    }else{
+      liveX.moveTo(Guide.xs[0],Guide.ys[0]);
+      for(let i=1;i<Guide.xs.length;i++) liveX.lineTo(Guide.xs[i],Guide.ys[i]);
+      liveX.stroke();
+      liveX.setLineDash([]);
+      // start (accent) + end (hollow) markers
+      const n=Guide.xs.length-1;
+      liveX.fillStyle='#6ea4c4';
+      liveX.beginPath(); liveX.arc(Guide.xs[0],Guide.ys[0],3.2/V.zoom,0,TAU); liveX.fill();
+      liveX.beginPath(); liveX.arc(Guide.xs[n],Guide.ys[n],3.2/V.zoom,0,TAU);
+      liveX.strokeStyle='#6ea4c4'; liveX.lineWidth=1.4/V.zoom; liveX.setLineDash([]); liveX.stroke();
+    }
+    liveX.restore();
+  },
+
   /* live overlay: technical gear readout */
   overlay(t,cx,cy,ang,visible){
-    liveX.setTransform(1,0,0,1,0,0);
-    liveX.clearRect(0,0,liveC.width,liveC.height);
     if(!visible || !S.showGears) return;
     V.apply(liveX);
     const {R,r,curve}=S;
@@ -624,6 +658,7 @@ const History = {
   },
   clearCanvas(){
     if(Auto.running) Auto.stop();
+    if(Path.running) Path.stop();
     if(!Strokes.list.length) return;
     this.push({type:'clear', strokes:Strokes.list.slice()});
     Strokes.list.length=0; Renderer.repaintAll();
@@ -667,7 +702,7 @@ const Session = {
 /* ---------------- Pointer input ---------------- */
 const Input = {
   pointers:new Map(),
-  drawing:false, panning:false, spaceHeld:false,
+  drawing:false, pathing:false, panning:false, spaceHeld:false,
   smX:0, smY:0, lastX:0, lastY:0,
   pinch:null, lastTap:0,
 
@@ -699,8 +734,9 @@ const Input = {
     }
 
     if(this.pointers.size===2){
-      // switch to pinch/pan; abandon draw
+      // switch to pinch/pan; abandon draw / path capture
       if(this.drawing){ Session.end(); this.drawing=false; }
+      this.pathing=false;
       const pts=[...this.pointers.values()];
       this.pinch={ d:Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y),
                    cx:(pts[0].x+pts[1].x)/2, cy:(pts[0].y+pts[1].y)/2 };
@@ -711,6 +747,16 @@ const Input = {
     if(this.spaceHeld || e.button===1){
       this.panning=true; this.lastX=e.clientX; this.lastY=e.clientY;
       document.body.style.cursor='grabbing'; return;
+    }
+
+    if(S.mode==='path'){
+      // draw a fresh guide path; the mechanism will trace it on RUN
+      if(Path.running) Path.stop();
+      Guide.reset();
+      const w=V.s2w(e.clientX,e.clientY);
+      Guide.addRaw(w.x,w.y);
+      this.pathing=true;
+      return;
     }
 
     if(S.mode==='auto'){
@@ -755,6 +801,12 @@ const Input = {
       Renderer.repaintAll(); return;
     }
 
+    if(this.pathing){
+      const evts = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+      for(const ev of evts){ const w=V.s2w(ev.clientX,ev.clientY); Guide.addRaw(w.x,w.y); }
+      return;
+    }
+
     if(!this.drawing) return;
 
     const evts = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
@@ -786,6 +838,11 @@ const Input = {
     this.pointers.delete(e.pointerId);
     if(this.pointers.size<2) this.pinch=null;
     if(this.panning && this.pointers.size===0){ this.panning=false; document.body.style.cursor=this.spaceHeld?'grab':''; }
+    if(this.pathing && this.pointers.size===0){
+      this.pathing=false;
+      if(Guide.build()){ const s0=Guide.sampleAt(0); S.anchor={x:s0.x,y:s0.y}; UI.toast('PRESS RUN TO TRACE'); }
+      else UI.toast('PATH TOO SHORT');
+    }
     if(this.drawing && this.pointers.size===0){
       this.drawing=false;
       S.anchor={x:Session.cx,y:Session.cy};
@@ -814,6 +871,101 @@ const Auto = {
     const dtSec=Math.min((now-this.lastT)/1000,0.05);
     this.lastT=now;
     Session.advance(S.dir*S.speed*1.5*dtSec);
+  }
+};
+
+/* ---------------- Guide path (free-path mode) ----------------
+   The user draws a guide curve; the mechanism later travels along it,
+   arc-length parameterised, with a smoothed tangent so orientation
+   follows the direction of travel without sudden jumps.            */
+const Guide = {
+  raw:[],                       // captured world points during draw
+  xs:[], ys:[], angs:[], cum:[], total:0,
+  step:3,                       // resample spacing (world units)
+  reset(){ this.raw=[]; this.xs=[]; this.ys=[]; this.angs=[]; this.cum=[]; this.total=0; },
+  addRaw(x,y){
+    const n=this.raw.length;
+    if(n){ const dx=x-this.raw[n-1].x, dy=y-this.raw[n-1].y; if(dx*dx+dy*dy < 1) return; }
+    this.raw.push({x,y});
+  },
+  ready(){ return this.total>1 && this.xs.length>1; },
+  build(){
+    const r=this.raw;
+    if(r.length<2){ this.reset(); return false; }
+    // resample to even arc-length spacing
+    const xs=[r[0].x], ys=[r[0].y];
+    let prev=r[0], carry=this.step;
+    for(let i=1;i<r.length;i++){
+      const cur=r[i], sdx=cur.x-prev.x, sdy=cur.y-prev.y;
+      const seg=Math.hypot(sdx,sdy);
+      if(seg===0){ prev=cur; continue; }
+      const ux=sdx/seg, uy=sdy/seg;
+      let d=carry;
+      while(d<=seg){ xs.push(prev.x+ux*d); ys.push(prev.y+uy*d); d+=this.step; }
+      carry=d-seg; prev=cur;
+    }
+    const last=r[r.length-1];
+    if(xs[xs.length-1]!==last.x || ys[ys.length-1]!==last.y){ xs.push(last.x); ys.push(last.y); }
+    // cumulative arc length + smoothed tangents
+    const cum=[0];
+    for(let i=1;i<xs.length;i++) cum.push(cum[i-1]+Math.hypot(xs[i]-xs[i-1], ys[i]-ys[i-1]));
+    const angs=[], W=2;
+    for(let i=0;i<xs.length;i++){
+      const a=Math.max(0,i-W), b=Math.min(xs.length-1,i+W);
+      angs.push(Math.atan2(ys[b]-ys[a], xs[b]-xs[a]));
+    }
+    this.xs=xs; this.ys=ys; this.cum=cum; this.angs=angs; this.total=cum[cum.length-1];
+    return this.total>1;
+  },
+  sampleAt(dist){
+    const {xs,ys,cum,angs,total}=this;
+    if(xs.length<2) return null;
+    dist=clamp(dist,0,total);
+    let lo=1, hi=cum.length-1;
+    while(lo<hi){ const mid=(lo+hi)>>1; if(cum[mid]<dist) lo=mid+1; else hi=mid; }
+    const i=lo;
+    const seg=cum[i]-cum[i-1] || 1;
+    const f=(dist-cum[i-1])/seg;
+    let da=angs[i]-angs[i-1]; while(da>Math.PI)da-=TAU; while(da<-Math.PI)da+=TAU;
+    return { x:lerp(xs[i-1],xs[i],f), y:lerp(ys[i-1],ys[i],f), ang:angs[i-1]+da*f };
+  }
+};
+
+/* ---------------- Path traversal (mechanism spirals along the guide) ---- */
+const Path = {
+  running:false, dist:0, lastT:0,
+  canRun(){ return Guide.ready(); },
+  start(){
+    if(this.running) return;
+    if(!this.canRun()){ UI.toast('DRAW A PATH FIRST'); return; }
+    this.running=true; this.dist=0; this.lastT=performance.now();
+    const s0=Guide.sampleAt(0);
+    Session.begin(s0.x,s0.y,s0.ang);
+    UI.syncPlay();
+  },
+  stop(){
+    if(!this.running) return;
+    this.running=false;
+    Session.end();
+    UI.syncPlay();
+  },
+  tick(now){
+    if(!this.running) return;
+    const dtSec=Math.min((now-this.lastT)/1000,0.05);
+    this.lastT=now;
+    const travel=S.pathSpeed*dtSec;
+    if(travel<=0) return;
+    // sub-step along the path so both travel and spin stay smooth
+    const sub=clamp(Math.ceil(travel/2),1,60), step=travel/sub;
+    for(let k=0;k<sub;k++){
+      this.dist+=step;
+      const smp=Guide.sampleAt(this.dist);
+      Session.cx=smp.x; Session.cy=smp.y; Session.ang=smp.ang;
+      // roll: rotation advances with distance travelled (rate-independent)
+      Session.advance(S.dir*S.speed*step/(S.r*0.9));
+      if(this.dist>=Guide.total) break;
+    }
+    if(this.dist>=Guide.total){ this.stop(); UI.toast('PATH COMPLETE'); }
   }
 };
 
@@ -851,6 +1003,7 @@ const UI = {
   init(){
     // mode selector
     this.$('mode-draw').onclick=()=>this.setMode('draw');
+    this.$('mode-path').onclick=()=>this.setMode('path');
     this.$('mode-auto').onclick=()=>this.setMode('auto');
 
     // dock panels
@@ -858,9 +1011,10 @@ const UI = {
       b.onclick=()=>this.togglePanel(b.dataset.panel,b);
     });
 
-    // play
+    // play — traces the guide in PATH mode, spins in place in AUTO
     this.$('playbtn').onclick=()=>{
       this.haptic();
+      if(S.mode==='path'){ Path.running?Path.stop():Path.start(); return; }
       if(S.mode!=='auto') this.setMode('auto');
       Auto.running?Auto.stop():Auto.start();
     };
@@ -885,6 +1039,7 @@ const UI = {
     this.bind('o', v=>{ S.pen.opacity=v; });
     this.bind('sp',v=>{ S.speed=v; });
     this.bind('sm',v=>{ S.smooth=v; });
+    this.bind('fl',v=>{ S.pathSpeed=v; });
 
     // curve + direction segments
     document.querySelectorAll('#curveseg button').forEach(b=>{
@@ -942,11 +1097,18 @@ const UI = {
     if(S.mode===m) return;
     this.haptic();
     if(Auto.running) Auto.stop();
+    if(Path.running) Path.stop();
     if(Input.drawing){ Session.end(); Input.drawing=false; }
+    Input.pathing=false;
     S.mode=m;
     this.$('mode-draw').setAttribute('aria-pressed',m==='draw');
+    this.$('mode-path').setAttribute('aria-pressed',m==='path');
     this.$('mode-auto').setAttribute('aria-pressed',m==='auto');
-    this.toast(m==='auto'?'AUTO · TAP TO PLACE, THEN RUN':'DRAW · DRAG TO GUIDE');
+    this.toast(
+      m==='auto' ? 'AUTO · TAP TO PLACE, THEN RUN' :
+      m==='path' ? (Guide.ready()?'PATH · PRESS RUN TO TRACE':'PATH · DRAW A GUIDE, THEN RUN') :
+                   'DRAW · DRAG TO GUIDE');
+    this.syncPlay();
   },
 
   togglePanel(name,btn){
@@ -971,15 +1133,14 @@ const UI = {
   },
 
   togglePause(){
-    if(S.mode==='auto'){
-      Auto.running?Auto.stop():Auto.start();
-    }
+    if(S.mode==='auto'){ Auto.running?Auto.stop():Auto.start(); }
+    else if(S.mode==='path'){ Path.running?Path.stop():Path.start(); }
   },
   syncPlay(){
-    const on=Auto.running;
+    const on=Auto.running||Path.running;
     this.$('playbtn').classList.toggle('playing',on);
     this.$('playbtn').setAttribute('aria-pressed',on);
-    this.$('playlabel').textContent=on?'PAUSE':'RUN';
+    this.$('playlabel').textContent=on?'PAUSE':(S.mode==='path'?'TRACE':'RUN');
     this.$('playicon').innerHTML=on
       ? '<path d="M9 5.5v13M15 5.5v13"/>'
       : '<path d="M8 5.5v13l10-6.5Z"/>';
@@ -1039,13 +1200,13 @@ const UI = {
 /* ---------------- main loop ---------------- */
 function frame(now){
   Auto.tick(now);
-  if(Session.live){
-    Renderer.paintIncrement();
-    Renderer.overlay(Session.t,Session.cx,Session.cy,Session.ang,true);
-  }else{
-    // idle preview of the mechanism at its anchor
-    Renderer.overlay(Session.t,S.anchor.x,S.anchor.y,Session.ang,true);
-  }
+  Path.tick(now);
+  if(Session.live) Renderer.paintIncrement();
+  // live layer: clear once, draw the guide beneath the mechanism readout
+  Renderer.clearOverlay();
+  if(S.mode==='path' || Path.running) Renderer.drawGuide();
+  if(Session.live) Renderer.overlay(Session.t,Session.cx,Session.cy,Session.ang,true);
+  else Renderer.overlay(Session.t,S.anchor.x,S.anchor.y,Session.ang,true);
   requestAnimationFrame(frame);
 }
 
