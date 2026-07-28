@@ -493,8 +493,13 @@ kbd{font-family:var(--mono);font-size:10px;background:rgba(255,255,255,.07);bord
         <button data-coil="1" aria-pressed="true">COIL</button>
         <button data-coil="0" aria-pressed="false">SPIRO</button>
       </div></div>
+    <div class="row"><label>REPEAT</label>
+      <div class="miniseg" id="textrepeatseg">
+        <button data-tloop="0" aria-pressed="true">ONCE</button>
+        <button data-tloop="1" aria-pressed="false">FOREVER</button>
+      </div></div>
     <div class="row"><button id="writebtn" class="chip">WRITE IT</button></div>
-    <div class="ratio">COIL = LEGIBLE SCRIPT · SPIRO = ABSTRACT WITH YOUR GEARS</div>
+    <div class="ratio">REPEAT + SYMMETRY = AMBIENT MANDALA · BEST LEFT FOREGROUND</div>
   </div>
   <!-- LAYERS -->
   <div data-view="layers" hidden>
@@ -573,6 +578,7 @@ const S = {
   snap:false,             // auto-close a drawn guide (snap end to start)
   textSize:320,           // world height of written script text
   textCoil:true,          // legible tight-coil writing vs abstract spiro
+  textLoop:false,         // keep re-writing the word, building density (ambient mode)
   symCount:1,             // radial symmetry copies around the world origin
   mirror:'none',          // none | x | y | xy
   pen:{ color:'#e8e6e1', width:1.1, opacity:0.9, grad:'solid' },
@@ -1115,6 +1121,20 @@ const Input = {
   }
 };
 
+/* ---------------- Screen wake lock (keeps long runs from sleeping) -------- */
+const Wake = {
+  lock:null,
+  async on(){
+    try{ if(navigator.wakeLock && !this.lock){ this.lock=await navigator.wakeLock.request('screen');
+      this.lock.addEventListener && this.lock.addEventListener('release',()=>{ this.lock=null; }); } }catch(e){}
+  },
+  off(){ try{ this.lock && this.lock.release(); }catch(e){} this.lock=null; }
+};
+// re-acquire the lock when returning to a still-running tab
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible' && (Auto.running || Path.running)) Wake.on();
+});
+
 /* ---------------- Autonomous mode ---------------- */
 const Auto = {
   running:false, lastT:0,
@@ -1122,13 +1142,13 @@ const Auto = {
     if(this.running) return;
     this.running=true; this.lastT=performance.now();
     Session.begin(S.anchor.x,S.anchor.y,Session.ang);
-    UI.syncPlay();
+    Wake.on(); UI.syncPlay();
   },
   stop(){
     if(!this.running) return;
     this.running=false;
     Session.end();
-    UI.syncPlay();
+    Wake.off(); UI.syncPlay();
   },
   tick(now){
     if(!this.running) return;
@@ -1263,8 +1283,9 @@ const Text = {
       xs.push(xs[0]); ys.push(ys[0]);               // close the loop
       const rs=resamplePts(xs, ys, 3);
       const gd=buildGuideData(rs.xs, rs.ys);
-      if(gd && gd.total>6) guides.push(gd);
+      if(gd && gd.total>6){ let mn=1e9; for(const x of rs.xs) if(x<mn)mn=x; gd.minX=mn; guides.push(gd); }
     }
+    guides.sort((a,b)=>a.minX-b.minX);              // write left-to-right, from the start of the word
     return guides;
   }
 };
@@ -1275,16 +1296,18 @@ const Text = {
 const Path = {
   running:false, dist:0, lastT:0, tdir:1,
   g:null, queue:[], group:null, coil:false,
+  textGuides:null, textLoop:false, phase:0, passes:0,
   canRun(){ return Guide.ready(); },
-  begin(g){
+  begin(g, startT){
     this.g=g; this.dist=0; this.tdir=1; this.running=true; this.lastT=performance.now();
     const s0=g.sampleAt(0);
     Session.begin(s0.x,s0.y,s0.ang);
+    if(startT) Session.t=startT;             // carry the coil phase across repeat passes
   },
   start(){                                   // hand-drawn single path (honours LOOP)
     if(this.running) return;
     if(!this.canRun()){ UI.toast('DRAW A PATH FIRST'); return; }
-    this.queue=[]; this.group=null; this.coil=false; activeGear=null;
+    this.queue=[]; this.group=null; this.coil=false; this.textGuides=null; this.textLoop=false; activeGear=null;
     this.begin(Guide);
     UI.syncPlay();
   },
@@ -1293,11 +1316,16 @@ const Path = {
     if(!guides || !guides.length) return;
     this.coil = !!(opts && opts.coil);
     activeGear = this.coil ? {curve:'coil', R:0, r:opts.coil.r, d:opts.coil.d} : null;
+    this.textGuides = guides.slice();
+    this.textLoop = !!(opts && opts.loop);
+    this.phase = 0; this.passes = 0;
     this.queue=guides.slice(); this.group=[];
-    this.begin(this.queue.shift());
+    this.begin(this.queue.shift(), this.phase);
+    if(this.textLoop) Wake.on();
     UI.syncPlay();
   },
-  finish(){ activeGear=null; this.coil=false; this.queue=[]; this.group=null; this.g=null; },
+  finish(){ activeGear=null; this.coil=false; this.queue=[]; this.group=null; this.g=null;
+    this.textGuides=null; this.textLoop=false; this.phase=0; Wake.off(); },
   stop(){
     if(!this.running) return;
     this.running=false;
@@ -1309,12 +1337,21 @@ const Path = {
   onSegmentEnd(){
     if(this.queue.length){                   // text: move to next glyph contour
       Session.end(this.group);
-      this.begin(this.queue.shift());
+      this.begin(this.queue.shift(), this.phase);
       return;
     }
-    if(this.group){                          // text finished
+    if(this.group){                          // a full word finished
       Session.end(this.group);
       if(this.group.length) History.push({type:'strokes', strokes:this.group.slice(), layer:Strokes.list});
+      if(this.textLoop && this.textGuides){  // ambient repeat: write it again, phase-shifted
+        let total=0; for(const s of Strokes.list) total+=s.pts.length;
+        if(total>6_000_000){ this.running=false; UI.syncPlay(); UI.toast('CANVAS FULL · LOOKS GREAT'); this.finish(); return; }
+        this.passes++; this.phase += 0.6;    // evolve the coil so density builds instead of overdrawing
+        this.group=[]; this.queue=this.textGuides.slice();
+        this.begin(this.queue.shift(), this.phase);
+        if(this.passes%8===0) UI.toast('PASS '+this.passes);
+        return;
+      }
       this.running=false; UI.syncPlay(); UI.toast('WRITTEN'); this.finish();
       return;
     }
@@ -1482,7 +1519,8 @@ const UI = {
     // play — traces the guide in PATH mode, spins in place in AUTO
     this.$('playbtn').onclick=()=>{
       this.haptic();
-      if(S.mode==='path'){ Path.running?Path.stop():Path.start(); return; }
+      if(Path.running){ Path.stop(); return; }   // stop any running trace / ambient text
+      if(S.mode==='path'){ Path.start(); return; }
       if(S.mode!=='auto') this.setMode('auto');
       Auto.running?Auto.stop():Auto.start();
     };
@@ -1530,6 +1568,7 @@ const UI = {
     seg('#snapseg', b=>{ S.snap=b.dataset.snap==='1'; });
     seg('#gradseg', b=>{ S.pen.grad=b.dataset.grad; });
     seg('#textstyleseg', b=>{ S.textCoil=b.dataset.coil==='1'; });
+    seg('#textrepeatseg', b=>{ S.textLoop=b.dataset.tloop==='1'; });
     seg('#mirrorseg', b=>{ S.mirror=b.dataset.mirror; Renderer.repaintAll(); });
     seg('#blendseg', b=>{ const L=Layers.current(); if(L){ L.blend=b.dataset.blend; Renderer.repaintAll(); } });
 
@@ -1635,10 +1674,11 @@ const UI = {
     if(S.textCoil){
       // tight coil sized to the text so words stay legible
       const rad=clamp(S.textSize*0.028, 4, 13);
-      Path.trace(guides, {coil:{r:clamp(rad*0.42,2,6), d:rad}});
+      Path.trace(guides, {coil:{r:clamp(rad*0.42,2,6), d:rad}, loop:S.textLoop});
     }else{
-      Path.trace(guides);   // abstract: uses the current gears
+      Path.trace(guides, {loop:S.textLoop});   // abstract: uses the current gears
     }
+    if(S.textLoop) this.toast(S.symCount>1?'AMBIENT MANDALA · TAP RUN TO STOP':'REPEATING · TAP RUN TO STOP');
   },
 
   // output menu
@@ -1803,8 +1843,9 @@ const UI = {
   },
 
   togglePause(){
+    if(Path.running){ Path.stop(); return; }     // stop ambient text / path trace from anywhere
     if(S.mode==='auto'){ Auto.running?Auto.stop():Auto.start(); }
-    else if(S.mode==='path'){ Path.running?Path.stop():Path.start(); }
+    else if(S.mode==='path'){ Path.start(); }
   },
   syncPlay(){
     const on=Auto.running||Path.running;
