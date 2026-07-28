@@ -1,0 +1,995 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<title>SPIROKRAFT</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ================= SPIROKRAFT design tokens ================= */
+:root{
+  --bg:#070708;
+  --ink:#e8e6e1;
+  --ink-dim:rgba(232,230,225,.52);
+  --ink-faint:rgba(232,230,225,.28);
+  --accent:#6ea4c4;
+  --panel:rgba(15,16,18,.68);
+  --panel-solid:#101113;
+  --hairline:rgba(255,255,255,.08);
+  --hairline-strong:rgba(255,255,255,.14);
+  --radius:14px;
+  --mono:'IBM Plex Mono',ui-monospace,monospace;
+  --disp:'Space Grotesk','Helvetica Neue',sans-serif;
+  --blur:blur(20px) saturate(1.25);
+  --ease:cubic-bezier(.32,.72,.28,1);
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;overflow:hidden;overscroll-behavior:none}
+body{
+  background:var(--bg);color:var(--ink);
+  font-family:var(--disp);font-size:13px;
+  touch-action:none;user-select:none;-webkit-user-select:none;
+}
+button,input{font-family:inherit;color:inherit}
+button{background:none;border:0;cursor:pointer}
+:focus{outline:none}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:8px}
+
+/* ================= canvas stack ================= */
+#stage{position:fixed;inset:0}
+canvas{position:absolute;inset:0;display:block}
+#art{z-index:1}#live{z-index:2}
+
+/* ================= chrome ================= */
+.chrome{position:fixed;z-index:10;transition:opacity .35s var(--ease),transform .35s var(--ease)}
+body.focusmode .chrome{opacity:0;pointer-events:none;transform:translateY(4px)}
+
+.glass{
+  background:var(--panel);
+  backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);
+  border:1px solid var(--hairline);
+  border-radius:var(--radius);
+  box-shadow:0 12px 40px rgba(0,0,0,.45);
+}
+@media (prefers-reduced-transparency:reduce){
+  .glass{background:var(--panel-solid);backdrop-filter:none;-webkit-backdrop-filter:none}
+}
+body.no-glass .glass{background:var(--panel-solid);backdrop-filter:none;-webkit-backdrop-filter:none}
+
+/* wordmark */
+#mark{top:calc(env(safe-area-inset-top) + 16px);left:18px;
+  font-family:var(--mono);font-size:10px;letter-spacing:.28em;color:var(--ink-faint)}
+#mark b{color:var(--ink-dim);font-weight:500}
+
+/* mode selector */
+#modes{top:calc(env(safe-area-inset-top) + 12px);left:50%;transform:translateX(-50%);
+  display:flex;padding:3px;gap:2px}
+body.focusmode #modes{transform:translateX(-50%) translateY(4px)}
+.seg{
+  min-width:64px;height:32px;padding:0 14px;border-radius:10px;
+  font-family:var(--mono);font-size:10px;letter-spacing:.18em;
+  color:var(--ink-dim);transition:background .2s,color .2s;
+}
+.seg[aria-pressed="true"]{background:rgba(255,255,255,.09);color:var(--ink)}
+.seg:hover{color:var(--ink)}
+
+/* top-right actions */
+#actions{top:calc(env(safe-area-inset-top) + 12px);right:14px;display:flex;padding:3px;gap:2px}
+.icobtn{
+  width:38px;height:32px;display:grid;place-items:center;border-radius:10px;
+  color:var(--ink-dim);transition:background .2s,color .2s;
+}
+.icobtn:hover{background:rgba(255,255,255,.07);color:var(--ink)}
+.icobtn[disabled]{opacity:.28;pointer-events:none}
+.icobtn svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}
+
+/* bottom-left zoom */
+#zoomer{bottom:calc(env(safe-area-inset-bottom) + 16px);left:16px;
+  display:flex;align-items:center;height:36px;padding:0 4px}
+#zoomtxt{font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--ink-dim);
+  padding:0 10px;height:100%;display:flex;align-items:center;border-radius:10px}
+#zoomtxt:hover{color:var(--ink)}
+
+/* bottom-right toggles */
+#viewtoggles{bottom:calc(env(safe-area-inset-bottom) + 16px);right:16px;display:flex;padding:3px;gap:2px}
+.icobtn[aria-pressed="true"]{color:var(--accent)}
+
+/* ================= dock ================= */
+#dock{
+  bottom:calc(env(safe-area-inset-bottom) + 16px);left:50%;transform:translateX(-50%);
+  display:flex;align-items:center;padding:5px;gap:2px;
+}
+body.focusmode #dock{transform:translateX(-50%) translateY(6px)}
+.dockbtn{
+  min-width:52px;height:46px;padding:0 10px;border-radius:11px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  color:var(--ink-dim);transition:background .2s,color .2s;
+}
+.dockbtn svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
+.dockbtn span{font-family:var(--mono);font-size:8px;letter-spacing:.2em}
+.dockbtn:hover{color:var(--ink)}
+.dockbtn[aria-expanded="true"]{background:rgba(255,255,255,.09);color:var(--ink)}
+.dockdiv{width:1px;height:26px;background:var(--hairline);margin:0 4px}
+#playbtn.playing{color:var(--accent)}
+
+/* ================= contextual panel ================= */
+#panel{
+  bottom:calc(env(safe-area-inset-bottom) + 76px);left:50%;transform:translateX(-50%);
+  width:308px;max-width:calc(100vw - 20px);
+  padding:16px 16px 14px;
+  opacity:0;pointer-events:none;transform:translateX(-50%) translateY(8px) scale(.985);
+  transition:opacity .22s var(--ease),transform .22s var(--ease);
+}
+#panel.open{opacity:1;pointer-events:auto;transform:translateX(-50%) translateY(0) scale(1)}
+.ptitle{font-family:var(--mono);font-size:9px;letter-spacing:.26em;color:var(--ink-faint);margin-bottom:14px;
+  display:flex;justify-content:space-between;align-items:center}
+.ptitle .val{color:var(--accent);letter-spacing:.1em}
+
+.row{display:flex;align-items:center;gap:12px;margin-bottom:13px}
+.row:last-child{margin-bottom:0}
+.row label{font-family:var(--mono);font-size:9px;letter-spacing:.14em;color:var(--ink-dim);width:66px;flex:none}
+.row output{font-family:var(--mono);font-size:10px;color:var(--ink-dim);width:40px;text-align:right;flex:none}
+
+input[type=range]{
+  flex:1;appearance:none;-webkit-appearance:none;height:28px;background:none;cursor:pointer;
+}
+input[type=range]::-webkit-slider-runnable-track{height:2px;background:rgba(255,255,255,.14);border-radius:1px}
+input[type=range]::-webkit-slider-thumb{
+  appearance:none;-webkit-appearance:none;width:14px;height:14px;margin-top:-6px;border-radius:50%;
+  background:var(--ink);border:0;transition:transform .15s;
+}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.25);background:var(--accent)}
+input[type=range]::-moz-range-track{height:2px;background:rgba(255,255,255,.14);border-radius:1px}
+input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--ink);border:0}
+input[type=range]:active::-moz-range-thumb{background:var(--accent)}
+
+input[type=number]{
+  width:52px;height:26px;background:rgba(255,255,255,.05);border:1px solid var(--hairline);
+  border-radius:7px;font-family:var(--mono);font-size:10px;text-align:center;flex:none;
+  appearance:textfield;-moz-appearance:textfield;
+}
+input[type=number]::-webkit-inner-spin-button{display:none}
+input[type=number]:focus{border-color:var(--accent)}
+@media (pointer:coarse){ input[type=number]{display:none} .row output{display:flex;justify-content:flex-end} }
+@media (pointer:fine){ .row output{display:none} }
+
+.miniseg{display:flex;background:rgba(255,255,255,.05);border:1px solid var(--hairline);border-radius:9px;padding:2px;gap:2px;flex:1}
+.miniseg button{
+  flex:1;height:26px;border-radius:7px;font-family:var(--mono);font-size:9px;letter-spacing:.16em;
+  color:var(--ink-dim);transition:background .2s,color .2s;
+}
+.miniseg button[aria-pressed="true"]{background:rgba(255,255,255,.1);color:var(--ink)}
+
+.swatches{display:flex;gap:8px;flex:1}
+.sw{width:26px;height:26px;border-radius:50%;border:1px solid var(--hairline-strong);cursor:pointer;
+  position:relative;transition:transform .15s}
+.sw:hover{transform:scale(1.12)}
+.sw[aria-pressed="true"]::after{content:'';position:absolute;inset:-5px;border:1px solid var(--accent);border-radius:50%}
+.ratio{font-family:var(--mono);font-size:9px;letter-spacing:.12em;color:var(--ink-faint);text-align:right;margin-top:2px}
+
+/* ================= toast & shortcuts ================= */
+#toast{
+  position:fixed;z-index:30;top:calc(env(safe-area-inset-top) + 60px);left:50%;transform:translateX(-50%) translateY(-6px);
+  padding:8px 16px;font-family:var(--mono);font-size:10px;letter-spacing:.16em;color:var(--ink-dim);
+  opacity:0;transition:opacity .25s,transform .25s;pointer-events:none;
+}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+#keys{position:fixed;inset:0;z-index:40;display:none;place-items:center;background:rgba(0,0,0,.5)}
+#keys.open{display:grid}
+#keysbox{width:340px;max-width:calc(100vw - 32px);padding:22px 24px}
+#keysbox h2{font-family:var(--mono);font-size:10px;letter-spacing:.28em;color:var(--ink-faint);margin-bottom:16px;font-weight:400}
+.krow{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:12px;color:var(--ink-dim)}
+.krow:last-child{border:0}
+kbd{font-family:var(--mono);font-size:10px;background:rgba(255,255,255,.07);border:1px solid var(--hairline);
+  border-radius:5px;padding:2px 7px;color:var(--ink)}
+
+/* hint */
+#hint{position:fixed;z-index:5;left:50%;top:50%;transform:translate(-50%,-50%);
+  font-family:var(--mono);font-size:10px;letter-spacing:.3em;color:var(--ink-faint);
+  pointer-events:none;transition:opacity .8s;text-align:center;line-height:2.2}
+#hint.gone{opacity:0}
+
+@media (max-width:560px){
+  #mark{display:none}
+  #modes{left:14px;transform:none}
+  body.focusmode #modes{transform:translateY(4px)}
+  .seg{min-width:52px;padding:0 10px}
+  #zoomer{display:none}
+  #dock{width:calc(100vw - 20px)}
+  .dockbtn{flex:1;min-width:0}
+}
+@media (prefers-reduced-motion:reduce){
+  *{transition:none!important;animation:none!important}
+}
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <canvas id="art"></canvas>
+  <canvas id="live"></canvas>
+</div>
+
+<div id="hint">DRAG TO GUIDE THE MECHANISM<br><span style="opacity:.6">SCROLL TO ZOOM · SPACE TO PAN</span></div>
+
+<div class="chrome" id="mark"><b>SPIRO</b>KRAFT</div>
+
+<div class="chrome glass" id="modes" role="group" aria-label="Drawing mode">
+  <button class="seg" id="mode-draw" aria-pressed="true">DRAW</button>
+  <button class="seg" id="mode-auto" aria-pressed="false">AUTO</button>
+</div>
+
+<div class="chrome glass" id="actions">
+  <button class="icobtn" id="undo" aria-label="Undo" title="Undo (Cmd+Z)">
+    <svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
+  <button class="icobtn" id="redo" aria-label="Redo" title="Redo (Cmd+Shift+Z)">
+    <svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/></svg></button>
+  <button class="icobtn" id="clear" aria-label="Clear canvas" title="Clear (Delete)">
+    <svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2m-8 0 1 12h8l1-12"/></svg></button>
+  <button class="icobtn" id="export" aria-label="Export PNG" title="Export PNG">
+    <svg viewBox="0 0 24 24"><path d="M12 4v11m0 0 4-4m-4 4-4-4"/><path d="M5 19h14"/></svg></button>
+</div>
+
+<div class="chrome glass" id="dock" role="toolbar" aria-label="Instrument dock">
+  <button class="dockbtn" data-panel="gear" aria-expanded="false" aria-label="Gear configuration">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="2.6"/>
+      <path d="M12 2.6v2M12 19.4v2M2.6 12h2M19.4 12h2M5.4 5.4l1.4 1.4M17.2 17.2l1.4 1.4M18.6 5.4l-1.4 1.4M6.8 17.2l-1.4 1.4"/></svg>
+    <span>GEAR</span></button>
+  <button class="dockbtn" data-panel="pen" aria-expanded="false" aria-label="Pen settings">
+    <svg viewBox="0 0 24 24"><path d="m14 4 6 6L9 21l-6.5 1L4 15.5Z"/><path d="m12.5 5.5 6 6"/></svg>
+    <span>PEN</span></button>
+  <button class="dockbtn" data-panel="speed" aria-expanded="false" aria-label="Speed and motion">
+    <svg viewBox="0 0 24 24"><path d="M4 15a8 8 0 0 1 16 0"/><path d="m12 15 4.5-5"/><circle cx="12" cy="15" r="1.2"/></svg>
+    <span>SPEED</span></button>
+  <div class="dockdiv"></div>
+  <button class="dockbtn" id="playbtn" aria-label="Start automatic drawing" aria-pressed="false">
+    <svg id="playicon" viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5Z"/></svg>
+    <span id="playlabel">RUN</span></button>
+</div>
+
+<div class="glass chrome" id="panel" role="dialog" aria-label="Instrument settings">
+  <!-- GEAR -->
+  <div data-view="gear" hidden>
+    <div class="ptitle">GEAR CONFIGURATION <span class="val" id="ratiotag">96 : 33</span></div>
+    <div class="row">
+      <label for="in-curve">SYSTEM</label>
+      <div class="miniseg" id="curveseg">
+        <button data-curve="hypo" aria-pressed="true">HYPO</button>
+        <button data-curve="epi" aria-pressed="false">EPI</button>
+      </div>
+    </div>
+    <div class="row"><label for="in-R">RING R</label>
+      <input type="range" id="in-R" min="30" max="260" step="1" value="96">
+      <input type="number" id="num-R" min="30" max="260" value="96" aria-label="Ring radius"><output id="out-R">96</output></div>
+    <div class="row"><label for="in-r">WHEEL r</label>
+      <input type="range" id="in-r" min="8" max="140" step="1" value="33">
+      <input type="number" id="num-r" min="8" max="140" value="33" aria-label="Wheel radius"><output id="out-r">33</output></div>
+    <div class="row"><label for="in-d">PEN d</label>
+      <input type="range" id="in-d" min="0" max="200" step="1" value="24">
+      <input type="number" id="num-d" min="0" max="200" value="24" aria-label="Pen offset"><output id="out-d">24</output></div>
+    <div class="ratio" id="teethtag">TEETH 32 · 11</div>
+  </div>
+  <!-- PEN -->
+  <div data-view="pen" hidden>
+    <div class="ptitle">PEN</div>
+    <div class="row"><label>COLOR</label>
+      <div class="swatches" id="swatches">
+        <button class="sw" data-c="#e8e6e1" style="background:#e8e6e1" aria-pressed="true" aria-label="Paper white"></button>
+        <button class="sw" data-c="#6ea4c4" style="background:#6ea4c4" aria-pressed="false" aria-label="Steel blue"></button>
+        <button class="sw" data-c="#c4a46e" style="background:#c4a46e" aria-pressed="false" aria-label="Brass"></button>
+        <button class="sw" data-c="#9a8fb8" style="background:#9a8fb8" aria-pressed="false" aria-label="Dusk violet"></button>
+        <button class="sw" data-c="#7d8a80" style="background:#7d8a80" aria-pressed="false" aria-label="Sage grey"></button>
+      </div></div>
+    <div class="row"><label for="in-w">WIDTH</label>
+      <input type="range" id="in-w" min="0.4" max="6" step="0.1" value="1.1">
+      <input type="number" id="num-w" min="0.4" max="6" step="0.1" value="1.1" aria-label="Line width"><output id="out-w">1.1</output></div>
+    <div class="row"><label for="in-o">OPACITY</label>
+      <input type="range" id="in-o" min="0.1" max="1" step="0.05" value="0.9">
+      <input type="number" id="num-o" min="0.1" max="1" step="0.05" value="0.9" aria-label="Line opacity"><output id="out-o">0.9</output></div>
+  </div>
+  <!-- SPEED -->
+  <div data-view="speed" hidden>
+    <div class="ptitle">MOTION</div>
+    <div class="row"><label for="in-sp">SPEED</label>
+      <input type="range" id="in-sp" min="0.2" max="4" step="0.1" value="1">
+      <input type="number" id="num-sp" min="0.2" max="4" step="0.1" value="1" aria-label="Rotation speed"><output id="out-sp">1.0</output></div>
+    <div class="row"><label for="in-sm">SMOOTH</label>
+      <input type="range" id="in-sm" min="0" max="1" step="0.05" value="0.55">
+      <input type="number" id="num-sm" min="0" max="1" step="0.05" value="0.55" aria-label="Input smoothing"><output id="out-sm">0.55</output></div>
+    <div class="row"><label>DIRECTION</label>
+      <div class="miniseg" id="dirseg">
+        <button data-dir="1" aria-pressed="true">CW</button>
+        <button data-dir="-1" aria-pressed="false">CCW</button>
+      </div></div>
+  </div>
+</div>
+
+<div class="chrome glass" id="zoomer">
+  <button id="zoomtxt" aria-label="Reset view" title="Reset view">100%</button>
+</div>
+
+<div class="chrome glass" id="viewtoggles">
+  <button class="icobtn" id="gearvis" aria-pressed="true" aria-label="Show gears" title="Show gears (G)">
+    <svg viewBox="0 0 24 24"><circle cx="10" cy="12" r="7"/><circle cx="14" cy="12" r="3"/><circle cx="15.6" cy="12" r=".8" fill="currentColor"/></svg></button>
+  <button class="icobtn" id="keysbtn" aria-label="Keyboard shortcuts" title="Shortcuts (?)">
+    <svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="11" rx="2"/><path d="M7 11h.01M11 11h.01M15 11h.01M8 14.5h8"/></svg></button>
+</div>
+
+<div id="toast" class="glass" role="status"></div>
+
+<div id="keys">
+  <div class="glass" id="keysbox">
+    <h2>SHORTCUTS</h2>
+    <div class="krow"><span>Pause / resume</span><kbd>P</kbd></div>
+    <div class="krow"><span>Reverse direction</span><kbd>R</kbd></div>
+    <div class="krow"><span>Show / hide gears</span><kbd>G</kbd></div>
+    <div class="krow"><span>Pan canvas</span><kbd>Space</kbd> + drag</div>
+    <div class="krow"><span>Zoom</span><span>Scroll / pinch</span></div>
+    <div class="krow"><span>Undo / redo</span><kbd>&#8984;Z</kbd> <kbd>&#8984;&#8679;Z</kbd></div>
+    <div class="krow"><span>Clear</span><kbd>Delete</kbd></div>
+    <div class="krow"><span>Hide interface</span><kbd>Tab</kbd></div>
+    <div class="krow"><span>Close / exit</span><kbd>Esc</kbd></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* ============================================================
+   SPIROKRAFT · Phase 1
+   Modules: State · Viewport · Spiro · Strokes · Renderer ·
+            Input · Auto · History · ExportPNG · UI
+   Artwork lives in world coordinates, independent of screen.
+   ============================================================ */
+
+const TAU = Math.PI * 2;
+const clamp = (v,a,b)=>Math.min(b,Math.max(a,v));
+const lerp = (a,b,t)=>a+(b-a)*t;
+
+/* ---------------- State ---------------- */
+const S = {
+  mode:'draw',            // draw | auto
+  curve:'hypo',           // hypo | epi
+  R:96, r:33, d:24,
+  dir:1, speed:1, smooth:0.55,
+  pen:{ color:'#e8e6e1', width:1.1, opacity:0.9 },
+  showGears:true,
+  autoRunning:false,
+  anchor:{x:0,y:0},       // world pos of mechanism when idle / auto
+};
+
+/* ---------------- Viewport (world <-> screen) ---------------- */
+const V = {
+  zoom:1, cam:{x:0,y:0}, dpr:1, w:0, h:0,
+  resize(){
+    this.dpr = Math.min(window.devicePixelRatio||1, 3);
+    this.w = window.innerWidth; this.h = window.innerHeight;
+    for(const c of [artC, liveC]){
+      c.width = Math.round(this.w*this.dpr);
+      c.height = Math.round(this.h*this.dpr);
+      c.style.width = this.w+'px'; c.style.height = this.h+'px';
+    }
+    Renderer.repaintAll();
+  },
+  apply(ctx){
+    ctx.setTransform(
+      this.dpr*this.zoom, 0, 0, this.dpr*this.zoom,
+      this.dpr*(this.w/2 - this.cam.x*this.zoom),
+      this.dpr*(this.h/2 - this.cam.y*this.zoom)
+    );
+  },
+  s2w(px,py){ return { x:(px - this.w/2)/this.zoom + this.cam.x,
+                       y:(py - this.h/2)/this.zoom + this.cam.y }; },
+  zoomAt(px,py,factor){
+    const before = this.s2w(px,py);
+    this.zoom = clamp(this.zoom*factor, 0.08, 12);
+    const after = this.s2w(px,py);
+    this.cam.x += before.x-after.x; this.cam.y += before.y-after.y;
+    Renderer.repaintAll(); UI.syncZoom();
+  },
+  reset(){ this.zoom=1; this.cam.x=0; this.cam.y=0; Renderer.repaintAll(); UI.syncZoom(); }
+};
+
+/* ---------------- Spirograph mathematics ---------------- */
+const Spiro = {
+  // pen point in the mechanism's local frame at parameter t
+  local(t){
+    const {R,r,d,curve} = S;
+    if(curve==='hypo'){
+      const k=(R-r)/r;
+      return [ (R-r)*Math.cos(t)+d*Math.cos(k*t),
+               (R-r)*Math.sin(t)-d*Math.sin(k*t) ];
+    }else{
+      const k=(R+r)/r;
+      return [ (R+r)*Math.cos(t)-d*Math.cos(k*t),
+               (R+r)*Math.sin(t)-d*Math.sin(k*t) ];
+    }
+  },
+  // world-space pen point for mechanism at (cx,cy) rotated by ang
+  pen(t,cx,cy,ang){
+    const [px,py] = this.local(t);
+    const ca=Math.cos(ang), sa=Math.sin(ang);
+    return { x:cx+px*ca-py*sa, y:cy+px*sa+py*ca };
+  },
+  wheelCenter(t,cx,cy,ang){
+    const {R,r,curve}=S;
+    const rr = curve==='hypo' ? R-r : R+r;
+    const ca=Math.cos(ang), sa=Math.sin(ang);
+    const lx=rr*Math.cos(t), ly=rr*Math.sin(t);
+    return { x:cx+lx*ca-ly*sa, y:cy+lx*sa+ly*ca };
+  },
+  wheelSpin(t){
+    const {R,r,curve}=S;
+    return curve==='hypo' ? -((R-r)/r)*t : ((R+r)/r)*t + t;
+  }
+};
+
+/* ---------------- Strokes (world-space artwork model) ---------------- */
+function newStroke(){
+  return { pts:[], color:S.pen.color, width:S.pen.width, opacity:S.pen.opacity, path:null };
+}
+const Strokes = {
+  list:[],
+  bounds(){
+    if(!this.list.length) return null;
+    let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+    for(const s of this.list) for(let i=0;i<s.pts.length;i+=2){
+      const x=s.pts[i],y=s.pts[i+1];
+      if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y;
+    }
+    return {x0,y0,x1,y1};
+  }
+};
+
+/* ---------------- Renderer ---------------- */
+const artC = document.getElementById('art');
+const liveC = document.getElementById('live');
+const artX = artC.getContext('2d');
+const liveX = liveC.getContext('2d');
+
+const Renderer = {
+  activeDrawn:0,   // points already painted from the active stroke
+  active:null,
+  strokePath(s){
+    if(!s.path || s.pathLen!==s.pts.length){
+      const p=new Path2D();
+      if(s.pts.length>=2){
+        p.moveTo(s.pts[0],s.pts[1]);
+        for(let i=2;i<s.pts.length;i+=2) p.lineTo(s.pts[i],s.pts[i+1]);
+      }
+      s.path=p; s.pathLen=s.pts.length;
+    }
+    return s.path;
+  },
+  paintStroke(ctx,s){
+    if(s.pts.length<4) return;
+    ctx.globalAlpha=s.opacity;
+    ctx.strokeStyle=s.color;
+    ctx.lineWidth=s.width;
+    ctx.lineCap='round'; ctx.lineJoin='round';
+    ctx.stroke(this.strokePath(s));
+  },
+  repaintAll(){
+    artX.setTransform(1,0,0,1,0,0);
+    artX.clearRect(0,0,artC.width,artC.height);
+    V.apply(artX);
+    for(const s of Strokes.list) this.paintStroke(artX,s);
+    if(this.active){ this.activeDrawn=0; this.paintIncrement(); }
+  },
+  beginActive(stroke){ this.active=stroke; this.activeDrawn=Math.max(0,stroke.pts.length-2); },
+  paintIncrement(){
+    const s=this.active; if(!s) return;
+    const n=s.pts.length;
+    if(n - this.activeDrawn < 4){ return; }
+    V.apply(artX);
+    artX.globalAlpha=s.opacity; artX.strokeStyle=s.color;
+    artX.lineWidth=s.width; artX.lineCap='round'; artX.lineJoin='round';
+    artX.beginPath();
+    const start=Math.max(0,this.activeDrawn-2);
+    artX.moveTo(s.pts[start],s.pts[start+1]);
+    for(let i=start+2;i<n;i+=2) artX.lineTo(s.pts[i],s.pts[i+1]);
+    artX.stroke();
+    this.activeDrawn=n;
+  },
+  endActive(){ this.active=null; },
+
+  /* live overlay: technical gear readout */
+  overlay(t,cx,cy,ang,visible){
+    liveX.setTransform(1,0,0,1,0,0);
+    liveX.clearRect(0,0,liveC.width,liveC.height);
+    if(!visible || !S.showGears) return;
+    V.apply(liveX);
+    const {R,r,curve}=S;
+    const lw = 1/V.zoom;
+    liveX.lineWidth=lw; liveX.lineCap='round';
+
+    liveX.save();
+    liveX.translate(cx,cy); liveX.rotate(ang);
+
+    // fixed ring + teeth ticks
+    liveX.strokeStyle='rgba(232,230,225,.30)';
+    liveX.beginPath(); liveX.arc(0,0,R,0,TAU); liveX.stroke();
+    const teethR=Math.max(8,Math.round(R/3));
+    liveX.strokeStyle='rgba(232,230,225,.16)';
+    liveX.beginPath();
+    for(let i=0;i<teethR;i++){
+      const a=i/teethR*TAU, s1=curve==='hypo'?R:R, s2=curve==='hypo'?R-3.5:R+3.5;
+      liveX.moveTo(Math.cos(a)*s1,Math.sin(a)*s1);
+      liveX.lineTo(Math.cos(a)*s2,Math.sin(a)*s2);
+    }
+    liveX.stroke();
+    // center crosshair
+    liveX.strokeStyle='rgba(232,230,225,.22)';
+    liveX.beginPath();
+    liveX.moveTo(-5,0); liveX.lineTo(5,0); liveX.moveTo(0,-5); liveX.lineTo(0,5);
+    liveX.stroke();
+    liveX.restore();
+
+    // moving wheel
+    const wc=Spiro.wheelCenter(t,cx,cy,ang);
+    const spin=Spiro.wheelSpin(t)+ang;
+    liveX.save();
+    liveX.translate(wc.x,wc.y); liveX.rotate(spin);
+    liveX.strokeStyle='rgba(232,230,225,.42)';
+    liveX.beginPath(); liveX.arc(0,0,r,0,TAU); liveX.stroke();
+    const teethW=Math.max(5,Math.round(r/3));
+    liveX.strokeStyle='rgba(232,230,225,.20)';
+    liveX.beginPath();
+    for(let i=0;i<teethW;i++){
+      const a=i/teethW*TAU;
+      liveX.moveTo(Math.cos(a)*(r-3),Math.sin(a)*(r-3));
+      liveX.lineTo(Math.cos(a)*r,Math.sin(a)*r);
+    }
+    liveX.stroke();
+    liveX.restore();
+
+    // pen arm + pen point
+    const p=Spiro.pen(t,cx,cy,ang);
+    liveX.strokeStyle='rgba(110,164,196,.5)';
+    liveX.beginPath(); liveX.moveTo(wc.x,wc.y); liveX.lineTo(p.x,p.y); liveX.stroke();
+    liveX.fillStyle='#6ea4c4';
+    liveX.beginPath(); liveX.arc(p.x,p.y,2.6/V.zoom,0,TAU); liveX.fill();
+  },
+  clearOverlay(){
+    liveX.setTransform(1,0,0,1,0,0);
+    liveX.clearRect(0,0,liveC.width,liveC.height);
+  }
+};
+
+/* ---------------- History (command-based, no bitmaps) ---------------- */
+const History = {
+  undoStack:[], redoStack:[],
+  push(cmd){ this.undoStack.push(cmd); this.redoStack.length=0; if(this.undoStack.length>200)this.undoStack.shift(); UI.syncHistory(); },
+  undo(){
+    const c=this.undoStack.pop(); if(!c) return;
+    if(c.type==='stroke'){ Strokes.list.pop(); }
+    else if(c.type==='clear'){ Strokes.list.push(...c.strokes); }
+    this.redoStack.push(c); Renderer.repaintAll(); UI.syncHistory();
+  },
+  redo(){
+    const c=this.redoStack.pop(); if(!c) return;
+    if(c.type==='stroke'){ Strokes.list.push(c.stroke); }
+    else if(c.type==='clear'){ Strokes.list.length=0; }
+    this.undoStack.push(c); Renderer.repaintAll(); UI.syncHistory();
+  },
+  clearCanvas(){
+    if(Auto.running) Auto.stop();
+    if(!Strokes.list.length) return;
+    this.push({type:'clear', strokes:Strokes.list.slice()});
+    Strokes.list.length=0; Renderer.repaintAll();
+    UI.toast('CLEARED');
+  }
+};
+
+/* ---------------- Drawing session (shared by drag + auto) ---------------- */
+const Session = {
+  t:0, ang:0, cx:0, cy:0, stroke:null, live:false,
+  begin(cx,cy,ang){
+    this.t=0; this.ang=ang||0; this.cx=cx; this.cy=cy;
+    this.stroke=newStroke();
+    const p=Spiro.pen(0,cx,cy,this.ang);
+    this.stroke.pts.push(p.x,p.y);
+    Strokes.list.push(this.stroke);
+    Renderer.beginActive(this.stroke);
+    this.live=true;
+  },
+  advance(dt){
+    // subdivide so curve stays smooth regardless of input rate
+    const steps=clamp(Math.ceil(Math.abs(dt)/0.045),1,90);
+    const inc=dt/steps;
+    for(let i=0;i<steps;i++){
+      this.t+=inc;
+      const p=Spiro.pen(this.t,this.cx,this.cy,this.ang);
+      this.stroke.pts.push(p.x,p.y);
+    }
+  },
+  end(){
+    if(!this.live) return;
+    this.live=false;
+    Renderer.paintIncrement();
+    Renderer.endActive();
+    const st=this.stroke; this.stroke=null;
+    if(st.pts.length>=8){ History.push({type:'stroke', stroke:st}); }
+    else { Strokes.list.pop(); Renderer.repaintAll(); }
+  }
+};
+
+/* ---------------- Pointer input ---------------- */
+const Input = {
+  pointers:new Map(),
+  drawing:false, panning:false, spaceHeld:false,
+  smX:0, smY:0, lastX:0, lastY:0,
+  pinch:null, lastTap:0,
+
+  init(){
+    const el=liveC;
+    el.addEventListener('pointerdown', e=>this.down(e));
+    el.addEventListener('pointermove', e=>this.move(e));
+    el.addEventListener('pointerup',   e=>this.up(e));
+    el.addEventListener('pointercancel', e=>this.up(e));
+    el.addEventListener('wheel', e=>{
+      e.preventDefault();
+      const f = Math.exp(-e.deltaY*0.0016);
+      V.zoomAt(e.clientX,e.clientY,f);
+    }, {passive:false});
+    window.addEventListener('keydown',e=>{ if(e.code==='Space'&&!e.repeat&&!UI.inField(e)){this.spaceHeld=true;e.preventDefault();document.body.style.cursor='grab';} });
+    window.addEventListener('keyup',e=>{ if(e.code==='Space'){this.spaceHeld=false;document.body.style.cursor='';} });
+  },
+
+  down(e){
+    UI.dismissHint();
+    liveC.setPointerCapture(e.pointerId);
+    this.pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+
+    // double-tap pause (touch)
+    if(e.pointerType==='touch' && this.pointers.size===1){
+      const now=performance.now();
+      if(now-this.lastTap<300){ UI.togglePause(); this.lastTap=0; return; }
+      this.lastTap=now;
+    }
+
+    if(this.pointers.size===2){
+      // switch to pinch/pan; abandon draw
+      if(this.drawing){ Session.end(); this.drawing=false; }
+      const pts=[...this.pointers.values()];
+      this.pinch={ d:Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y),
+                   cx:(pts[0].x+pts[1].x)/2, cy:(pts[0].y+pts[1].y)/2 };
+      return;
+    }
+    if(this.pointers.size>2) return;
+
+    if(this.spaceHeld || e.button===1){
+      this.panning=true; this.lastX=e.clientX; this.lastY=e.clientY;
+      document.body.style.cursor='grabbing'; return;
+    }
+
+    if(S.mode==='auto'){
+      // place / reposition the mechanism
+      const w=V.s2w(e.clientX,e.clientY);
+      S.anchor=w;
+      if(Auto.running){ Auto.stop(); Auto.start(); }
+      return;
+    }
+
+    // begin free-path drawing
+    const w=V.s2w(e.clientX,e.clientY);
+    this.smX=w.x; this.smY=w.y;
+    this.drawing=true;
+    Session.begin(w.x,w.y,0);
+  },
+
+  move(e){
+    if(!this.pointers.has(e.pointerId)) {
+      // hover in draw mode: preview mechanism
+      return;
+    }
+    const rec=this.pointers.get(e.pointerId);
+    rec.x=e.clientX; rec.y=e.clientY;
+
+    if(this.pinch && this.pointers.size===2){
+      const pts=[...this.pointers.values()];
+      const d=Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y);
+      const cx=(pts[0].x+pts[1].x)/2, cy=(pts[0].y+pts[1].y)/2;
+      if(this.pinch.d>0) V.zoomAt(cx,cy,d/this.pinch.d);
+      // two-finger pan
+      V.cam.x-=(cx-this.pinch.cx)/V.zoom; V.cam.y-=(cy-this.pinch.cy)/V.zoom;
+      Renderer.repaintAll();
+      this.pinch={d,cx,cy};
+      return;
+    }
+
+    if(this.panning){
+      V.cam.x-=(e.clientX-this.lastX)/V.zoom;
+      V.cam.y-=(e.clientY-this.lastY)/V.zoom;
+      this.lastX=e.clientX; this.lastY=e.clientY;
+      Renderer.repaintAll(); return;
+    }
+
+    if(!this.drawing) return;
+
+    const evts = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+    for(const ev of evts){
+      const w=V.s2w(ev.clientX,ev.clientY);
+      // input smoothing (EMA); smooth=0 -> raw
+      const a = 1 - S.smooth*0.9;
+      const nx=lerp(this.smX,w.x,a), ny=lerp(this.smY,w.y,a);
+      const dx=nx-this.smX, dy=ny-this.smY;
+      const ds=Math.hypot(dx,dy);
+      if(ds < 0.35/V.zoom) continue;
+
+      // smoothed tangent -> mechanism orientation (no rotation jumps)
+      const target=Math.atan2(dy,dx);
+      let delta=target-Session.ang;
+      while(delta>Math.PI)delta-=TAU; while(delta<-Math.PI)delta+=TAU;
+      Session.ang+=delta*clamp(ds*0.06,0.04,0.35);
+
+      this.smX=nx; this.smY=ny;
+      Session.cx=nx; Session.cy=ny;
+
+      // roll: rotation advances with distance travelled (rate-independent)
+      const dt = S.dir * S.speed * ds / (S.r*0.9);
+      Session.advance(dt);
+    }
+  },
+
+  up(e){
+    this.pointers.delete(e.pointerId);
+    if(this.pointers.size<2) this.pinch=null;
+    if(this.panning && this.pointers.size===0){ this.panning=false; document.body.style.cursor=this.spaceHeld?'grab':''; }
+    if(this.drawing && this.pointers.size===0){
+      this.drawing=false;
+      S.anchor={x:Session.cx,y:Session.cy};
+      Session.end();
+    }
+  }
+};
+
+/* ---------------- Autonomous mode ---------------- */
+const Auto = {
+  running:false, lastT:0,
+  start(){
+    if(this.running) return;
+    this.running=true; this.lastT=performance.now();
+    Session.begin(S.anchor.x,S.anchor.y,Session.ang);
+    UI.syncPlay();
+  },
+  stop(){
+    if(!this.running) return;
+    this.running=false;
+    Session.end();
+    UI.syncPlay();
+  },
+  tick(now){
+    if(!this.running) return;
+    const dtSec=Math.min((now-this.lastT)/1000,0.05);
+    this.lastT=now;
+    Session.advance(S.dir*S.speed*1.5*dtSec);
+  }
+};
+
+/* ---------------- Export ---------------- */
+function exportPNG(scale=3){
+  const b=Strokes.bounds();
+  if(!b){ UI.toast('NOTHING TO EXPORT'); return; }
+  const pad=48;
+  const w=Math.ceil((b.x1-b.x0+pad*2)*scale);
+  const h=Math.ceil((b.y1-b.y0+pad*2)*scale);
+  if(w*h>64e6){ scale=Math.sqrt(64e6/((b.x1-b.x0+pad*2)*(b.y1-b.y0+pad*2))); }
+  const c=document.createElement('canvas');
+  c.width=Math.ceil((b.x1-b.x0+pad*2)*scale);
+  c.height=Math.ceil((b.y1-b.y0+pad*2)*scale);
+  const x=c.getContext('2d');
+  x.fillStyle='#070708'; x.fillRect(0,0,c.width,c.height);
+  x.setTransform(scale,0,0,scale,(pad-b.x0)*scale,(pad-b.y0)*scale);
+  for(const s of Strokes.list) Renderer.paintStroke(x,s);
+  c.toBlob(blob=>{
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='spirokraft-'+Date.now()+'.png';
+    a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+    UI.toast('EXPORTED · '+c.width+'×'+c.height);
+  },'image/png');
+}
+
+/* ---------------- UI ---------------- */
+const UI = {
+  panelOpen:null, paused:false,
+  $:(id)=>document.getElementById(id),
+  inField(e){ const t=e.target; return t && (t.tagName==='INPUT'||t.tagName==='TEXTAREA'); },
+
+  init(){
+    // mode selector
+    this.$('mode-draw').onclick=()=>this.setMode('draw');
+    this.$('mode-auto').onclick=()=>this.setMode('auto');
+
+    // dock panels
+    document.querySelectorAll('.dockbtn[data-panel]').forEach(b=>{
+      b.onclick=()=>this.togglePanel(b.dataset.panel,b);
+    });
+
+    // play
+    this.$('playbtn').onclick=()=>{
+      if(S.mode!=='auto') this.setMode('auto');
+      Auto.running?Auto.stop():Auto.start();
+    };
+
+    // actions
+    this.$('undo').onclick=()=>History.undo();
+    this.$('redo').onclick=()=>History.redo();
+    this.$('clear').onclick=()=>History.clearCanvas();
+    this.$('export').onclick=()=>exportPNG(3);
+    this.$('zoomtxt').onclick=()=>V.reset();
+    this.$('gearvis').onclick=()=>{ S.showGears=!S.showGears; this.$('gearvis').setAttribute('aria-pressed',S.showGears); };
+    this.$('keysbtn').onclick=()=>this.$('keys').classList.toggle('open');
+    this.$('keys').onclick=e=>{ if(e.target.id==='keys') this.$('keys').classList.remove('open'); };
+
+    // sliders <-> numbers <-> state
+    this.bind('R', v=>{ S.R=v; if(S.curve==='hypo'&&S.r>=S.R) this.setVal('r',S.R-4); this.syncGearTags(); });
+    this.bind('r', v=>{ S.r=v; if(S.curve==='hypo'&&S.r>=S.R) this.setVal('R',S.r+4); this.syncGearTags(); });
+    this.bind('d', v=>{ S.d=v; });
+    this.bind('w', v=>{ S.pen.width=v; });
+    this.bind('o', v=>{ S.pen.opacity=v; });
+    this.bind('sp',v=>{ S.speed=v; });
+    this.bind('sm',v=>{ S.smooth=v; });
+
+    // curve + direction segments
+    document.querySelectorAll('#curveseg button').forEach(b=>{
+      b.onclick=()=>{
+        S.curve=b.dataset.curve;
+        document.querySelectorAll('#curveseg button').forEach(x=>x.setAttribute('aria-pressed',x===b));
+        if(S.curve==='hypo'&&S.r>=S.R) this.setVal('r',S.R-4);
+        this.syncGearTags();
+      };
+    });
+    document.querySelectorAll('#dirseg button').forEach(b=>{
+      b.onclick=()=>{
+        S.dir=+b.dataset.dir;
+        document.querySelectorAll('#dirseg button').forEach(x=>x.setAttribute('aria-pressed',x===b));
+      };
+    });
+
+    // swatches
+    document.querySelectorAll('.sw').forEach(b=>{
+      b.onclick=()=>{
+        S.pen.color=b.dataset.c;
+        document.querySelectorAll('.sw').forEach(x=>x.setAttribute('aria-pressed',x===b));
+      };
+    });
+
+    // keyboard
+    window.addEventListener('keydown',e=>this.keys(e));
+    this.syncGearTags(); this.syncHistory(); this.syncZoom();
+  },
+
+  bind(key,apply){
+    const range=this.$('in-'+key), num=this.$('num-'+key), out=this.$('out-'+key);
+    const set=v=>{
+      v=clamp(parseFloat(v)||0, parseFloat(range.min), parseFloat(range.max));
+      range.value=v; if(num)num.value=v; if(out)out.textContent=(+v).toFixed(v%1?2:0).replace(/\.?0+$/,'')||v;
+      apply(v);
+    };
+    range.addEventListener('input',()=>set(range.value));
+    if(num) num.addEventListener('change',()=>set(num.value));
+    this['setVal_'+key]=set;
+  },
+  setVal(key,v){ this['setVal_'+key](v); },
+
+  setMode(m){
+    if(S.mode===m) return;
+    if(Auto.running) Auto.stop();
+    if(Input.drawing){ Session.end(); Input.drawing=false; }
+    S.mode=m;
+    this.$('mode-draw').setAttribute('aria-pressed',m==='draw');
+    this.$('mode-auto').setAttribute('aria-pressed',m==='auto');
+    this.toast(m==='auto'?'AUTO · TAP TO PLACE, THEN RUN':'DRAW · DRAG TO GUIDE');
+  },
+
+  togglePanel(name,btn){
+    const panel=this.$('panel');
+    document.querySelectorAll('.dockbtn[data-panel]').forEach(b=>b.setAttribute('aria-expanded','false'));
+    if(this.panelOpen===name){
+      this.panelOpen=null; panel.classList.remove('open'); return;
+    }
+    this.panelOpen=name;
+    panel.querySelectorAll('[data-view]').forEach(v=>v.hidden = v.dataset.view!==name);
+    panel.classList.add('open');
+    btn.setAttribute('aria-expanded','true');
+  },
+  closePanel(){
+    this.panelOpen=null;
+    this.$('panel').classList.remove('open');
+    document.querySelectorAll('.dockbtn[data-panel]').forEach(b=>b.setAttribute('aria-expanded','false'));
+  },
+
+  togglePause(){
+    if(S.mode==='auto'){
+      Auto.running?Auto.stop():Auto.start();
+    }
+  },
+  syncPlay(){
+    const on=Auto.running;
+    this.$('playbtn').classList.toggle('playing',on);
+    this.$('playbtn').setAttribute('aria-pressed',on);
+    this.$('playlabel').textContent=on?'PAUSE':'RUN';
+    this.$('playicon').innerHTML=on
+      ? '<path d="M9 5.5v13M15 5.5v13"/>'
+      : '<path d="M8 5.5v13l10-6.5Z"/>';
+  },
+  syncHistory(){
+    this.$('undo').disabled=!History.undoStack.length;
+    this.$('redo').disabled=!History.redoStack.length;
+  },
+  syncZoom(){ this.$('zoomtxt').textContent=Math.round(V.zoom*100)+'%'; },
+  syncGearTags(){
+    const g=(a,b)=>b?g(b,a%b):a;
+    const tR=Math.max(6,Math.round(S.R/3)), tr=Math.max(4,Math.round(S.r/3));
+    const cd=g(tR,tr);
+    this.$('ratiotag').textContent=(tR/cd)+' : '+(tr/cd);
+    this.$('teethtag').textContent='TEETH '+tR+' · '+tr;
+  },
+
+  keys(e){
+    if(this.inField(e)){
+      if(e.key==='Escape') e.target.blur();
+      return;
+    }
+    const meta=e.metaKey||e.ctrlKey;
+    if(meta && e.key.toLowerCase()==='z'){
+      e.preventDefault(); e.shiftKey?History.redo():History.undo(); return;
+    }
+    switch(e.key){
+      case 'p': case 'P': this.togglePause(); break;
+      case 'g': case 'G': this.$('gearvis').click(); break;
+      case 'r': case 'R':
+        S.dir*=-1;
+        document.querySelectorAll('#dirseg button').forEach(x=>x.setAttribute('aria-pressed',+x.dataset.dir===S.dir));
+        this.toast(S.dir>0?'CLOCKWISE':'COUNTER-CLOCKWISE'); break;
+      case 'Delete': case 'Backspace': History.clearCanvas(); break;
+      case 'Escape':
+        if(this.$('keys').classList.contains('open')) this.$('keys').classList.remove('open');
+        else if(this.panelOpen) this.closePanel();
+        else if(document.body.classList.contains('focusmode')) document.body.classList.remove('focusmode');
+        break;
+      case 'Tab':
+        e.preventDefault();
+        document.body.classList.toggle('focusmode'); break;
+      case '?': this.$('keys').classList.toggle('open'); break;
+    }
+  },
+
+  toastTimer:null,
+  toast(msg){
+    const t=this.$('toast');
+    t.textContent=msg; t.classList.add('show');
+    clearTimeout(this.toastTimer);
+    this.toastTimer=setTimeout(()=>t.classList.remove('show'),1800);
+  },
+  dismissHint(){ this.$('hint').classList.add('gone'); },
+};
+
+/* ---------------- main loop ---------------- */
+function frame(now){
+  Auto.tick(now);
+  if(Session.live){
+    Renderer.paintIncrement();
+    Renderer.overlay(Session.t,Session.cx,Session.cy,Session.ang,true);
+  }else{
+    // idle preview of the mechanism at its anchor
+    Renderer.overlay(Session.t,S.anchor.x,S.anchor.y,Session.ang,true);
+  }
+  requestAnimationFrame(frame);
+}
+
+/* ---------------- boot ---------------- */
+window.addEventListener('resize',()=>V.resize());
+V.resize();
+Input.init();
+UI.init();
+requestAnimationFrame(frame);
+setTimeout(()=>UI.dismissHint(),6000);
+</script>
+</body>
+</html>
