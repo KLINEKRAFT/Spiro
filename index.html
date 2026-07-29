@@ -238,6 +238,9 @@ body.erasing #erasebtn{color:var(--accent)}
 }
 body.threed #threedbar{display:flex;opacity:1;pointer-events:auto;transform:translateX(-50%) translateY(0)}
 body.threed.focusmode #threedbar{opacity:0;pointer-events:none}
+/* GEAR/PEN edits rebuild the mesh live, so panels stay usable in 3D —
+   the 3D bar just gets out of the way instead of stacking with them */
+body.threed.panelopen #threedbar{opacity:0;pointer-events:none;transform:translateX(-50%) translateY(8px)}
 .t3row{display:flex;align-items:center;gap:12px}
 .t3row label{font-family:var(--mono);font-size:9px;letter-spacing:.16em;color:var(--ink-dim);width:52px;flex:none}
 .t3row input[type=range]{flex:1}
@@ -1212,6 +1215,12 @@ const Input = {
       const f = Math.exp(-e.deltaY*0.0016);
       V.zoomAt(e.clientX,e.clientY,f);
     }, {passive:false});
+    // 3D layer: starting an orbit also dismisses any open panel / menu
+    const gl=document.getElementById('gl');
+    if(gl) gl.addEventListener('pointerdown',()=>{
+      if(UI.panelOpen) UI.closePanel();
+      if(document.getElementById('outputpanel').classList.contains('open')) UI.toggleOutput(false);
+    });
     window.addEventListener('keydown',e=>{ if(e.code==='Space'&&!e.repeat&&!UI.inField(e)){this.spaceHeld=true;e.preventDefault();document.body.style.cursor='grab';} });
     window.addEventListener('keyup',e=>{ if(e.code==='Space'){this.spaceHeld=false;document.body.style.cursor='';} });
   },
@@ -1869,6 +1878,7 @@ const Orb = {
     if(!M){ UI.toast(performance.now()>5000 ? '3D UNAVAILABLE HERE' : '3D ENGINE LOADING…'); return; }
     if(Auto.running) Auto.stop(); if(Path.running) Path.stop();
     if(Kiosk.on) Kiosk.stop();
+    UI.closePanel(); UI.toggleOutput(false);   // the 3D bar owns this zone
     if(!M.ready && !M.init(document.getElementById('gl'))){
       UI.toast('3D UNAVAILABLE'); return;
     }
