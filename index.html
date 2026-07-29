@@ -50,6 +50,9 @@ button{background:none;border:0;cursor:pointer}
 #stage{position:fixed;inset:0}
 canvas{position:absolute;inset:0;display:block}
 #art{z-index:1}#live{z-index:2}
+/* 3D mode renders on the live layer; hide the flat artwork beneath it */
+body.threed #art{opacity:0}
+body.threed #hint{display:none}
 
 /* ================= chrome ================= */
 .chrome{position:fixed;z-index:10;transition:opacity .35s var(--ease),transform .35s var(--ease)}
@@ -362,6 +365,7 @@ kbd{font-family:var(--mono);font-size:10px;background:rgba(255,255,255,.07);bord
   <button class="chip out" id="out-png">PNG · HI-RES</button>
   <button class="chip out" id="out-svg">SVG · VECTOR</button>
   <button class="chip out" id="out-replay">REPLAY DRAW</button>
+  <button class="chip out" id="out-kiosk">KIOSK MODE</button>
   <div class="outdiv"></div>
   <div class="slotrow"><input type="text" id="slotname" class="textin" maxlength="20" placeholder="project name…" aria-label="Project name" autocomplete="off"><button class="chip out" id="out-save" style="width:auto;padding:0 12px">SAVE</button></div>
   <div id="slotlist"></div>
@@ -460,6 +464,12 @@ kbd{font-family:var(--mono);font-size:10px;background:rgba(255,255,255,.07);bord
         <button data-pstyle="dot" aria-pressed="false">DOT</button>
         <button data-pstyle="glow" aria-pressed="false">GLOW</button>
       </div></div>
+    <div class="row"><label for="in-pens">RIBBON</label>
+      <input type="range" id="in-pens" min="1" max="7" step="1" value="1">
+      <input type="number" id="num-pens" min="1" max="7" value="1" aria-label="Ribbon pen count"><output id="out-pens">1</output></div>
+    <div class="row"><label for="in-gap">SPREAD</label>
+      <input type="range" id="in-gap" min="2" max="40" step="1" value="9">
+      <input type="number" id="num-gap" min="2" max="40" value="9" aria-label="Ribbon spread"><output id="out-gap">9</output></div>
   </div>
   <!-- SPEED -->
   <div data-view="speed" hidden>
@@ -556,6 +566,8 @@ kbd{font-family:var(--mono);font-size:10px;background:rgba(255,255,255,.07);bord
 </div>
 
 <div class="chrome glass" id="viewtoggles">
+  <button class="icobtn" id="threedbtn" aria-pressed="false" aria-label="3D mode" title="3D spiro">
+    <svg viewBox="0 0 24 24"><path d="M12 2.5 21 7.5v9L12 21.5 3 16.5v-9Z"/><path d="M12 2.5v19M21 7.5l-9 5-9-5"/></svg></button>
   <button class="icobtn" id="gearvis" aria-pressed="true" aria-label="Show gears" title="Show gears (G)">
     <svg viewBox="0 0 24 24"><circle cx="10" cy="12" r="7"/><circle cx="14" cy="12" r="3"/><circle cx="15.6" cy="12" r=".8" fill="currentColor"/></svg></button>
   <button class="icobtn" id="focusbtn" aria-pressed="false" aria-label="Presentation mode" title="Presentation mode (Tab)">
@@ -613,7 +625,7 @@ const S = {
   textTrace:'center',     // center (stroke skeleton, like handwriting) | edge (outline)
   symCount:1,             // radial symmetry copies around the world origin
   mirror:'none',          // none | x | y | xy
-  pen:{ color:'#e8e6e1', width:1.1, opacity:0.9, grad:'solid', style:'line' },
+  pen:{ color:'#e8e6e1', width:1.1, opacity:0.9, grad:'solid', style:'line', count:1, gap:9 },
   showGears:true,
   autoRunning:false,
   anchor:{x:0,y:0},       // world pos of mechanism when idle / auto
@@ -633,7 +645,7 @@ const PRESETS = {
 
 /* ---------------- Viewport (world <-> screen) ---------------- */
 const V = {
-  zoom:1, cam:{x:0,y:0}, dpr:1, w:0, h:0,
+  zoom:1, cam:{x:0,y:0}, rot:0, dpr:1, w:0, h:0,
   resize(){
     this.dpr = Math.min(window.devicePixelRatio||1, 3);
     this.w = window.innerWidth; this.h = window.innerHeight;
@@ -645,14 +657,16 @@ const V = {
     Renderer.repaintAll();
   },
   apply(ctx){
-    ctx.setTransform(
-      this.dpr*this.zoom, 0, 0, this.dpr*this.zoom,
-      this.dpr*(this.w/2 - this.cam.x*this.zoom),
-      this.dpr*(this.h/2 - this.cam.y*this.zoom)
-    );
+    const z=this.dpr*this.zoom, c=Math.cos(this.rot), s=Math.sin(this.rot);
+    const a=z*c, b=z*s, cc=-z*s, d=z*c;
+    ctx.setTransform(a, b, cc, d,
+      this.dpr*this.w/2 - (a*this.cam.x + cc*this.cam.y),
+      this.dpr*this.h/2 - (b*this.cam.x + d*this.cam.y));
   },
-  s2w(px,py){ return { x:(px - this.w/2)/this.zoom + this.cam.x,
-                       y:(py - this.h/2)/this.zoom + this.cam.y }; },
+  s2w(px,py){
+    const dx=px - this.w/2, dy=py - this.h/2, c=Math.cos(this.rot), s=Math.sin(this.rot);
+    return { x:this.cam.x + (c*dx + s*dy)/this.zoom,
+             y:this.cam.y + (-s*dx + c*dy)/this.zoom }; },
   zoomAt(px,py,factor){
     const before = this.s2w(px,py);
     this.zoom = clamp(this.zoom*factor, 0.08, 12);
@@ -660,7 +674,17 @@ const V = {
     this.cam.x += before.x-after.x; this.cam.y += before.y-after.y;
     Renderer.repaintAll(); UI.syncZoom();
   },
-  reset(){ this.zoom=1; this.cam.x=0; this.cam.y=0; Renderer.repaintAll(); UI.syncZoom(); }
+  reset(){ this.zoom=1; this.cam.x=0; this.cam.y=0; this.rot=0; Renderer.repaintAll(); UI.syncZoom(); },
+  // frame a world-space bounds: centre on it and zoom out only if it overflows
+  fitText(b, marginPx){
+    if(!b) return;
+    const m=marginPx==null?60:marginPx;
+    const bw=(b.x1-b.x0)||1, bh=(b.y1-b.y0)||1;
+    const fit=Math.min((this.w-2*m)/bw, (this.h-2*m)/bh);
+    this.zoom=clamp(Math.min(this.zoom, fit), 0.08, 12);
+    this.cam.x=(b.x0+b.x1)/2; this.cam.y=(b.y0+b.y1)/2;
+    Renderer.repaintAll(); UI.syncZoom();
+  }
 };
 
 /* ---------------- Spirograph mathematics ---------------- */
@@ -669,8 +693,10 @@ let activeGear = null;
 const Spiro = {
   gear(){ return activeGear || S; },
   // pen point in the mechanism's local frame at parameter t
-  local(t){
-    const {R,r,d,curve} = activeGear || S;
+  // dOff shifts the pen distance — used to fan out multiple ribbon pens
+  local(t, dOff){
+    const g = activeGear || S;
+    const R=g.R, r=g.r, curve=g.curve, d=g.d+(dOff||0);
     if(curve==='coil'){
       // a small circle of radius d, centred on the path point → a tight
       // spring/coil that hugs the guide (legible script writing)
@@ -687,8 +713,8 @@ const Spiro = {
     }
   },
   // world-space pen point for mechanism at (cx,cy) rotated by ang
-  pen(t,cx,cy,ang){
-    const [px,py] = this.local(t);
+  pen(t,cx,cy,ang,dOff){
+    const [px,py] = this.local(t,dOff);
     const ca=Math.cos(ang), sa=Math.sin(ang);
     return { x:cx+px*ca-py*sa, y:cy+px*sa+py*ca };
   },
@@ -772,8 +798,7 @@ const artX = artC.getContext('2d');
 const liveX = liveC.getContext('2d');
 
 const Renderer = {
-  activeDrawn:0,   // points already painted from the active stroke
-  active:null,
+  actives:[],      // strokes currently being drawn (>1 for ribbon pens)
   strokePath(s){
     if(!s.path || s.pathLen!==s.pts.length){
       const p=new Path2D();
@@ -842,30 +867,35 @@ const Renderer = {
       for(const s of L.strokes) this.paintStroke(artX,s,L.opacity);
     }
     artX.globalCompositeOperation='source-over';
-    if(this.active){ this.activeDrawn=0; this.paintIncrement(); }
+    if(this.actives.length){ for(const s of this.actives) s._drawn=0; this.paintIncrement(); }
   },
-  beginActive(stroke){ this.active=stroke; this.activeDrawn=Math.max(0,stroke.pts.length-2); },
+  beginActive(strokes){
+    this.actives = Array.isArray(strokes)?strokes.slice():[strokes];
+    for(const s of this.actives){ s._drawn=Math.max(0,s.pts.length-2); s._plen=s._plen||0; }
+  },
   paintIncrement(){
-    const s=this.active; if(!s) return;
-    const n=s.pts.length;
-    if(n - this.activeDrawn < 4){ return; }
-    V.apply(artX);
+    if(!this.actives.length) return;
     const la=Layers.current().opacity;
-    artX.globalAlpha=s.opacity*la; artX.lineWidth=s.width; artX.lineCap='round'; artX.lineJoin='round';
-    const start=Math.max(0,this.activeDrawn-2);
-    this.applyStyle(artX,s,s._plen||0);      // dash offset = length painted so far
-    const draw = (s.grad && s.grad!=='solid')
-      ? ()=>this.strokeGradient(artX,s,start+2,n)
-      : ()=>{ artX.strokeStyle=s.color; artX.beginPath(); artX.moveTo(s.pts[start],s.pts[start+1]);
-              for(let i=start+2;i<n;i+=2) artX.lineTo(s.pts[i],s.pts[i+1]); artX.stroke(); };
-    this.withSym(artX, draw);
-    this.clearStyle(artX);
-    // accumulate painted length so live dashes stay continuous across increments
-    let add=0; for(let i=start+2;i<n;i+=2) add+=Math.hypot(s.pts[i]-s.pts[i-2], s.pts[i+1]-s.pts[i-1]);
-    s._plen=(s._plen||0)+add;
-    this.activeDrawn=n;
+    let painted=false;
+    for(const s of this.actives){
+      const n=s.pts.length;
+      if(n - (s._drawn||0) < 4) continue;
+      if(!painted){ V.apply(artX); painted=true; }
+      artX.globalAlpha=s.opacity*la; artX.lineWidth=s.width; artX.lineCap='round'; artX.lineJoin='round';
+      const start=Math.max(0,(s._drawn||0)-2);
+      this.applyStyle(artX,s,s._plen||0);      // dash offset = length painted so far
+      const draw = (s.grad && s.grad!=='solid')
+        ? ()=>this.strokeGradient(artX,s,start+2,n)
+        : ()=>{ artX.strokeStyle=s.color; artX.beginPath(); artX.moveTo(s.pts[start],s.pts[start+1]);
+                for(let i=start+2;i<n;i+=2) artX.lineTo(s.pts[i],s.pts[i+1]); artX.stroke(); };
+      this.withSym(artX, draw);
+      this.clearStyle(artX);
+      let add=0; for(let i=start+2;i<n;i+=2) add+=Math.hypot(s.pts[i]-s.pts[i-2], s.pts[i+1]-s.pts[i-1]);
+      s._plen=(s._plen||0)+add;
+      s._drawn=n;
+    }
   },
-  endActive(){ this.active=null; },
+  endActive(){ this.actives=[]; },
 
   /* dashed guide path for free-path mode (caller clears the live layer) */
   drawGuide(){
@@ -990,14 +1020,20 @@ const History = {
 
 /* ---------------- Drawing session (shared by drag + auto) ---------------- */
 const Session = {
-  t:0, ang:0, cx:0, cy:0, stroke:null, live:false,
-  begin(cx,cy,ang){
+  t:0, ang:0, cx:0, cy:0, strokes:[], live:false, pens:1,
+  get stroke(){ return this.strokes[0]||null; },   // back-compat for single-pen checks
+  penOffset(k){ return this.pens<=1 ? 0 : (k-(this.pens-1)/2)*S.pen.gap; },
+  begin(cx,cy,ang,pens){
     this.t=0; this.ang=ang||0; this.cx=cx; this.cy=cy;
-    this.stroke=newStroke();
-    const p=Spiro.pen(0,cx,cy,this.ang);
-    this.stroke.pts.push(p.x,p.y);
-    Strokes.list.push(this.stroke);
-    Renderer.beginActive(this.stroke);
+    this.pens = Math.max(1, pens||1);
+    this.strokes=[];
+    for(let k=0;k<this.pens;k++){
+      const s=newStroke(); s._dOff=this.penOffset(k);
+      const p=Spiro.pen(0,cx,cy,this.ang,s._dOff);
+      s.pts.push(p.x,p.y);
+      Strokes.list.push(s); this.strokes.push(s);
+    }
+    Renderer.beginActive(this.strokes);
     this.live=true;
   },
   advance(dt){
@@ -1006,8 +1042,7 @@ const Session = {
     const inc=dt/steps;
     for(let i=0;i<steps;i++){
       this.t+=inc;
-      const p=Spiro.pen(this.t,this.cx,this.cy,this.ang);
-      this.stroke.pts.push(p.x,p.y);
+      for(const s of this.strokes){ const p=Spiro.pen(this.t,this.cx,this.cy,this.ang,s._dOff); s.pts.push(p.x,p.y); }
     }
   },
   end(collector){
@@ -1015,19 +1050,23 @@ const Session = {
     this.live=false;
     Renderer.paintIncrement();
     Renderer.endActive();
-    const st=this.stroke; this.stroke=null;
-    if(st.pts.length>=8){
-      if(collector) collector.push(st);           // grouped (e.g. a written word)
-      else History.push({type:'stroke', stroke:st, layer:Strokes.list});
-    }else{ Strokes.list.pop(); Renderer.repaintAll(); }
+    const list=this.strokes; this.strokes=[];
+    const kept=list.filter(s=>s.pts.length>=8);
+    for(const s of list) if(s.pts.length<8){ const i=Strokes.list.indexOf(s); if(i>=0) Strokes.list.splice(i,1); }
+    if(kept.length){
+      if(collector) collector.push(...kept);        // grouped (e.g. a written word)
+      else if(kept.length===1) History.push({type:'stroke', stroke:kept[0], layer:Strokes.list});
+      else History.push({type:'strokes', strokes:kept, layer:Strokes.list});
+    }
+    Renderer.repaintAll();
   },
-  // discard the active stroke entirely — the gesture turned out not to be a draw
+  // discard the active strokes entirely — the gesture turned out not to be a draw
   abandon(){
     if(!this.live) return;
     this.live=false;
     Renderer.endActive();
-    if(this.stroke){ const i=Strokes.list.indexOf(this.stroke); if(i>=0) Strokes.list.splice(i,1); }
-    this.stroke=null;
+    for(const s of this.strokes){ const i=Strokes.list.indexOf(s); if(i>=0) Strokes.list.splice(i,1); }
+    this.strokes=[];
     Renderer.repaintAll();
   }
 };
@@ -1050,7 +1089,7 @@ const Input = {
     el.addEventListener('wheel', e=>{
       e.preventDefault();
       const f = Math.exp(-e.deltaY*0.0016);
-      V.zoomAt(e.clientX,e.clientY,f);
+      if(Orb.on) Orb.zoom(f); else V.zoomAt(e.clientX,e.clientY,f);
     }, {passive:false});
     window.addEventListener('keydown',e=>{ if(e.code==='Space'&&!e.repeat&&!UI.inField(e)){this.spaceHeld=true;e.preventDefault();document.body.style.cursor='grab';} });
     window.addEventListener('keyup',e=>{ if(e.code==='Space'){this.spaceHeld=false;document.body.style.cursor='';} });
@@ -1060,6 +1099,15 @@ const Input = {
     UI.dismissHint();
     try{ liveC.setPointerCapture(e.pointerId); }catch(err){}
     this.pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+
+    // 3D orbit takes over the canvas entirely
+    if(Orb.on){
+      if(this.pointers.size===2){ const pts=[...this.pointers.values()];
+        this.pinch={ d:Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y) }; Orb.dragging=false; return; }
+      Orb.down(e); return;
+    }
+    // any tap exits kiosk mode
+    if(Kiosk.on){ Kiosk.stop(); this.consumed=e.pointerId; return; }
 
     // a tap on the canvas while a panel/menu is open dismisses it (touch)
     if(e.pointerType==='touch' && this.pointers.size===1){
@@ -1111,7 +1159,7 @@ const Input = {
     const w=V.s2w(e.clientX,e.clientY);
     this.smX=w.x; this.smY=w.y;
     this.drawing=true;
-    Session.begin(w.x,w.y,0);
+    Session.begin(w.x,w.y,0,S.pen.count);
   },
 
   move(e){
@@ -1121,6 +1169,13 @@ const Input = {
     }
     const rec=this.pointers.get(e.pointerId);
     rec.x=e.clientX; rec.y=e.clientY;
+
+    if(Orb.on){
+      if(this.pinch && this.pointers.size===2){ const pts=[...this.pointers.values()];
+        const d=Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y);
+        if(this.pinch.d>0) Orb.zoom(d/this.pinch.d); this.pinch.d=d; return; }
+      Orb.move(e); return;
+    }
 
     if(this.pinch && this.pointers.size===2){
       const pts=[...this.pointers.values()];
@@ -1191,6 +1246,7 @@ const Input = {
   up(e){
     this.pointers.delete(e.pointerId);
     if(this.pointers.size<2) this.pinch=null;
+    if(Orb.on){ if(this.pointers.size===0) Orb.up(); return; }
     if(this.consumed===e.pointerId){ this.consumed=null; return; }
     if(this.panning && this.pointers.size===0){ this.panning=false; document.body.style.cursor=this.spaceHeld?'grab':''; }
     if(this.pathing && this.pointers.size===0){
@@ -1239,7 +1295,7 @@ const Auto = {
   start(){
     if(this.running) return;
     this.running=true; this.lastT=performance.now();
-    Session.begin(S.anchor.x,S.anchor.y,Session.ang);
+    Session.begin(S.anchor.x,S.anchor.y,Session.ang,S.pen.count);
     Wake.on(); UI.syncPlay();
   },
   stop(){
@@ -1430,11 +1486,11 @@ const Text = {
     if(!polys.length) return [];
     const scale=(worldHeight||300)/(asc+desc);
     const halfW=w/2, halfH=h/2;
-    const ox=V.cam.x, oy=V.cam.y;   // land the text at the current view centre
+    // centre the word on the world origin; the view auto-frames it after
     const guides=[];
     for(const c of polys){
-      const xs=c.map(p=>(p[0]-halfW)*scale+ox);
-      const ys=c.map(p=>(p[1]-halfH)*scale+oy);
+      const xs=c.map(p=>(p[0]-halfW)*scale);
+      const ys=c.map(p=>(p[1]-halfH)*scale);
       if(!center){ xs.push(xs[0]); ys.push(ys[0]); }  // outlines are closed loops
       const rs=resamplePts(xs, ys, 3);
       const gd=buildGuideData(rs.xs, rs.ys);
@@ -1605,7 +1661,7 @@ const Project = {
     Layers.active=Math.min(obj.active||0, Layers.list.length-1);
     Layers.seq=obj.seq||Layers.list.length+1;
     if(obj.sym){ S.symCount=obj.sym.count||1; S.mirror=obj.sym.mirror||'none'; }
-    Renderer.active=null; History.undoStack.length=0; History.redoStack.length=0;
+    Renderer.endActive(); History.undoStack.length=0; History.redoStack.length=0;
     Renderer.repaintAll(); UI.syncAll(); UI.syncHistory();
     return true;
   },
@@ -1627,7 +1683,7 @@ const Replay = {
     const items=[];
     for(const L of Layers.list){ if(!L.visible) continue; for(const s of L.strokes) if(s.pts.length>=4) items.push({s,la:L.opacity,blend:L.blend}); }
     if(!items.length){ UI.toast('NOTHING TO REPLAY'); return; }
-    Renderer.active=null;
+    Renderer.endActive();
     this.items=items; this.ii=0; this.pi=0; this.running=true;
     // time-based pacing: reveal the whole piece in ~8s regardless of its
     // size or the device frame rate (small drawings animate, never blink)
@@ -1668,6 +1724,98 @@ const Replay = {
   }
 };
 
+/* ---------------- Kiosk / screensaver ----------------
+   Hides the interface and slowly rotates the whole canvas while whatever
+   is running keeps drawing — an ambient display for a left-alone screen. */
+const Kiosk = {
+  on:false, spin:0.05, lastT:0,   // rad/sec
+  toggle(){ this.on?this.stop():this.start(); },
+  start(){ this.on=true; this.lastT=performance.now(); document.body.classList.add('kiosk');
+    UI.setFocus(true); Wake.on(); UI.toast('KIOSK · TAP TO EXIT'); },
+  stop(){ this.on=false; document.body.classList.remove('kiosk');
+    UI.setFocus(false); if(!(Auto.running||Path.running)) Wake.off();
+    V.rot=0; Renderer.repaintAll(); },
+  tick(now){
+    if(!this.on) return;
+    const dt=Math.min((now-this.lastT)/1000,0.05); this.lastT=now;
+    V.rot += this.spin*dt;
+    Renderer.repaintAll();
+  }
+};
+
+/* ---------------- 3D spirograph (self-contained projection) ----------------
+   A toroidal winding derived from the current gears, rendered as a glowing
+   depth-shaded wireframe you can orbit with a finger.                    */
+const Orb = {
+  on:false, rx:-0.55, ry:0.6, auto:0.16, scale:1, dragging:false, lastT:0, px:0, py:0,
+  toggle(){ this.on?this.stop():this.start(); },
+  start(){
+    if(Auto.running) Auto.stop(); if(Path.running) Path.stop();
+    this.on=true; this.lastT=performance.now();
+    document.body.classList.add('threed'); Wake.on();
+    this.$btn(); UI.toast('3D · DRAG TO ORBIT');
+  },
+  stop(){
+    this.on=false; document.body.classList.remove('threed');
+    if(!(Auto.running||Path.running)) Wake.off();
+    this.$btn(); Renderer.clearOverlay(); Renderer.repaintAll();
+  },
+  $btn(){ const b=UI.$('threedbtn'); if(b) b.setAttribute('aria-pressed', this.on); },
+  points(){
+    const R=Math.max(20,S.R), d=Math.max(6,S.d||20), r=Math.max(4,S.r);
+    const k=Math.max(2, Math.round(R/r));       // windings around the ring
+    const N=2400, out=[];
+    for(let i=0;i<=N;i++){ const t=i/N*TAU;
+      const rr=R + d*Math.cos(k*t);
+      out.push([ rr*Math.cos(t), rr*Math.sin(t), d*Math.sin(k*t) ]);
+    }
+    return out;
+  },
+  render(){
+    liveX.setTransform(1,0,0,1,0,0);
+    liveX.clearRect(0,0,liveC.width,liveC.height);
+    liveX.setTransform(V.dpr,0,0,V.dpr,0,0);
+    const cx=V.w/2, cy=V.h/2;
+    const R=Math.max(20,S.R), d=Math.max(6,S.d||20);
+    const fit=Math.min(V.w,V.h)*0.34*this.scale/(R+d+1);
+    const crx=Math.cos(this.rx), srx=Math.sin(this.rx), cry=Math.cos(this.ry), sry=Math.sin(this.ry);
+    const pts=this.points(), proj=[];
+    let zmin=1e9, zmax=-1e9;
+    for(const [x,y,z] of pts){
+      const X=x*cry + z*sry, Z=-x*sry + z*cry;   // yaw
+      const Y=y*crx - Z*srx, Z2=y*srx + Z*crx;    // pitch
+      const persp=1/(1 - Z2*fit/1400);
+      proj.push([cx+X*fit*persp, cy+Y*fit*persp, Z2]);
+      if(Z2<zmin)zmin=Z2; if(Z2>zmax)zmax=Z2;
+    }
+    const base=hexToHsl(S.pen.color), zr=(zmax-zmin)||1;
+    liveX.lineCap='round'; liveX.lineJoin='round';
+    liveX.strokeStyle=`hsl(${base[0]} ${Math.max(base[1],55)}% ${clamp(base[2],48,70)}%)`;
+    for(let i=1;i<proj.length;i++){
+      const a=proj[i-1], b=proj[i];
+      const zt=(((a[2]+b[2])/2)-zmin)/zr;         // 0 far … 1 near
+      liveX.globalAlpha=(0.18+0.82*zt)*S.pen.opacity;
+      liveX.lineWidth=(0.5+2.4*zt)*S.pen.width;
+      liveX.shadowColor=S.pen.color; liveX.shadowBlur=7*zt;
+      liveX.beginPath(); liveX.moveTo(a[0],a[1]); liveX.lineTo(b[0],b[1]); liveX.stroke();
+    }
+    liveX.shadowBlur=0; liveX.globalAlpha=1;
+  },
+  // orbit interaction
+  down(e){ this.dragging=true; this.px=e.clientX; this.py=e.clientY; },
+  move(e){ if(!this.dragging) return;
+    this.ry += (e.clientX-this.px)*0.008; this.rx += (e.clientY-this.py)*0.008;
+    this.rx=clamp(this.rx,-1.5,1.5); this.px=e.clientX; this.py=e.clientY; },
+  up(){ this.dragging=false; },
+  zoom(f){ this.scale=clamp(this.scale*f,0.3,4); },
+  tick(now){
+    if(!this.on) return;
+    const dt=Math.min((now-this.lastT)/1000,0.05); this.lastT=now;
+    if(!this.dragging) this.ry += this.auto*dt;
+    this.render();
+  }
+};
+
 /* ---------------- UI ---------------- */
 const UI = {
   panelOpen:null, paused:false,
@@ -1705,12 +1853,14 @@ const UI = {
     this.$('out-png').onclick=()=>{ exportPNG(3); this.toggleOutput(false); };
     this.$('out-svg').onclick=()=>{ exportSVG(); this.toggleOutput(false); };
     this.$('out-replay').onclick=()=>{ this.toggleOutput(false); Replay.start(); };
+    this.$('out-kiosk').onclick=()=>{ this.toggleOutput(false); Kiosk.start(); };
     this.$('out-save').onclick=()=>{ Project.saveSlot(this.$('slotname').value); this.$('slotname').value=''; };
     this.$('slotname').onkeydown=e=>{ if(e.key==='Enter'){ Project.saveSlot(this.$('slotname').value); this.$('slotname').value=''; } };
     this.$('out-file').onclick=()=>{ Project.exportFile(); this.toggleOutput(false); };
     this.$('out-import').onclick=()=>this.$('importfile').click();
     this.$('importfile').onchange=e=>{ if(e.target.files[0]){ Project.importFile(e.target.files[0]); this.toggleOutput(false); } e.target.value=''; };
     this.$('gearvis').onclick=()=>{ S.showGears=!S.showGears; this.$('gearvis').setAttribute('aria-pressed',S.showGears); this.haptic(); };
+    this.$('threedbtn').onclick=()=>{ Orb.toggle(); this.haptic(); };
     this.$('focusbtn').onclick=()=>this.setFocus(!document.body.classList.contains('focusmode'));
     this.$('focuschip').onclick=()=>this.setFocus(false);
     this.$('keysbtn').onclick=()=>this.$('keys').classList.toggle('open');
@@ -1728,6 +1878,8 @@ const UI = {
     this.bind('ts',v=>{ S.textSize=v; });
     this.bind('lo',v=>{ const L=Layers.current(); if(L){ L.opacity=v; Renderer.repaintAll(); } });
     this.bind('sym',v=>{ S.symCount=v; Renderer.repaintAll(); });
+    this.bind('pens',v=>{ S.pen.count=v; });
+    this.bind('gap',v=>{ S.pen.gap=v; });
 
     // simple on/off + choice segments → state
     const seg=(sel,fn)=>document.querySelectorAll(sel+' button').forEach(b=>{
@@ -1842,6 +1994,13 @@ const UI = {
     btn.textContent='WRITE IT'; btn.disabled=false;
     if(!guides.length){ this.toast('COULD NOT TRACE TEXT'); return; }
     this.dismissHint();
+    // auto-frame the whole word so long phrases never run off the canvas
+    let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+    for(const g of guides) for(let i=0;i<g.xs.length;i++){
+      if(g.xs[i]<x0)x0=g.xs[i]; if(g.xs[i]>x1)x1=g.xs[i];
+      if(g.ys[i]<y0)y0=g.ys[i]; if(g.ys[i]>y1)y1=g.ys[i];
+    }
+    V.fitText({x0,y0,x1,y1}, 70);
     if(S.textCoil){
       // tight coil sized to the text so words stay legible
       const rad=clamp(S.textSize*0.028, 4, 13);
@@ -1949,7 +2108,7 @@ const UI = {
     if(Layers.list.length<=1){ this.toast('KEEP AT LEAST ONE LAYER'); return; }
     Layers.list.splice(i,1);
     if(Layers.active>=Layers.list.length) Layers.active=Layers.list.length-1;
-    Renderer.active=null; Renderer.repaintAll(); this.renderLayers(); this.syncActiveLayer();
+    Renderer.endActive(); Renderer.repaintAll(); this.renderLayers(); this.syncActiveLayer();
     this.haptic(); this.toast('LAYER DELETED');
   },
   syncActiveLayer(){
@@ -1969,6 +2128,8 @@ const UI = {
     document.querySelectorAll('#strokeseg button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.pstyle===S.pen.style));
     document.querySelectorAll('.sw').forEach(x=>x.setAttribute('aria-pressed',x.dataset.c===S.pen.color));
     this.setVal('w',S.pen.width); this.setVal('o',S.pen.opacity);
+    this.setVal('pens',S.pen.count||1); this.setVal('gap',S.pen.gap||9);
+    document.querySelectorAll('#strokeseg button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.pstyle===(S.pen.style||'line')));
     this.syncGearTags(); this.renderLayers(); this.syncActiveLayer();
   },
 
@@ -2060,7 +2221,9 @@ const UI = {
         this.toast(S.dir>0?'CLOCKWISE':'COUNTER-CLOCKWISE'); break;
       case 'Delete': case 'Backspace': History.clearCanvas(); break;
       case 'Escape':
-        if(this.$('keys').classList.contains('open')) this.$('keys').classList.remove('open');
+        if(Orb.on) Orb.stop();
+        else if(Kiosk.on) Kiosk.stop();
+        else if(this.$('keys').classList.contains('open')) this.$('keys').classList.remove('open');
         else if(this.$('outputpanel').classList.contains('open')) this.toggleOutput(false);
         else if(this.panelOpen) this.closePanel();
         else if(document.body.classList.contains('focusmode')) this.setFocus(false);
@@ -2084,16 +2247,20 @@ const UI = {
 
 /* ---------------- main loop ---------------- */
 function frame(now){
+  if(Orb.on){ Orb.tick(now); requestAnimationFrame(frame); return; }
   Auto.tick(now);
   Path.tick(now);
   Replay.tick();
+  Kiosk.tick(now);              // rotates + repaints when active
   if(Session.live) Renderer.paintIncrement();
   // live layer: clear once, draw the guide beneath the mechanism readout
   Renderer.clearOverlay();
-  if(S.mode==='path') Renderer.drawGuide();
-  const showMech = !Path.group;   // hide the gear ghost while writing text
-  if(Session.live) Renderer.overlay(Session.t,Session.cx,Session.cy,Session.ang,showMech);
-  else Renderer.overlay(Session.t,S.anchor.x,S.anchor.y,Session.ang,showMech);
+  if(!Kiosk.on){
+    if(S.mode==='path') Renderer.drawGuide();
+    const showMech = !Path.group;   // hide the gear ghost while writing text
+    if(Session.live) Renderer.overlay(Session.t,Session.cx,Session.cy,Session.ang,showMech);
+    else Renderer.overlay(Session.t,S.anchor.x,S.anchor.y,Session.ang,showMech);
+  }
   requestAnimationFrame(frame);
 }
 
