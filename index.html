@@ -50,8 +50,10 @@ button{background:none;border:0;cursor:pointer}
 #stage{position:fixed;inset:0}
 canvas{position:absolute;inset:0;display:block}
 #art{z-index:1}#live{z-index:2}
-/* 3D mode renders on the live layer; hide the flat artwork beneath it */
-body.threed #art{opacity:0}
+/* three.js layer sits on top and only participates in 3D mode */
+#gl{z-index:3;display:none;touch-action:none}
+body.threed #gl{display:block}
+body.threed #art,body.threed #live{opacity:0;pointer-events:none}
 body.threed #hint{display:none}
 
 /* ================= chrome ================= */
@@ -223,6 +225,27 @@ input[type=number]:focus{border-color:var(--accent)}
 #writebtn{width:100%;height:40px;color:var(--accent);border-color:rgba(110,164,196,.4);letter-spacing:.22em}
 #writebtn:hover{background:rgba(110,164,196,.16)}
 
+body.erasing #live{cursor:crosshair}
+body.erasing #erasebtn{color:var(--accent)}
+
+/* 3D contextual bar — only visible in 3D mode */
+#threedbar{
+  left:50%;transform:translateX(-50%) translateY(8px);
+  bottom:calc(env(safe-area-inset-bottom) + 78px);
+  width:min(420px,calc(100vw - 24px));padding:13px 16px 12px;
+  display:none;flex-direction:column;gap:9px;opacity:0;pointer-events:none;
+  transition:opacity .22s var(--ease),transform .22s var(--ease);
+}
+body.threed #threedbar{display:flex;opacity:1;pointer-events:auto;transform:translateX(-50%) translateY(0)}
+body.threed.focusmode #threedbar{opacity:0;pointer-events:none}
+.t3row{display:flex;align-items:center;gap:12px}
+.t3row label{font-family:var(--mono);font-size:9px;letter-spacing:.16em;color:var(--ink-dim);width:52px;flex:none}
+.t3row input[type=range]{flex:1}
+.t3btns{display:flex;gap:8px;margin-top:2px}
+.t3btns .chip{flex:1;height:36px}
+#rec3d.recording{color:#e07a6a;border-color:rgba(224,122,106,.5);background:rgba(224,122,106,.14)}
+@media (pointer:coarse){ .t3btns .chip{height:44px} }
+
 /* output / save menu (top-right) */
 #outputpanel{top:calc(env(safe-area-inset-top) + 58px);right:14px;width:190px;padding:12px;
   display:flex;flex-direction:column;gap:6px;
@@ -337,6 +360,7 @@ kbd{font-family:var(--mono);font-size:10px;background:rgba(255,255,255,.07);bord
 <div id="stage">
   <canvas id="art"></canvas>
   <canvas id="live"></canvas>
+  <canvas id="gl"></canvas>
 </div>
 
 <div id="hint">DRAG TO GUIDE THE MECHANISM<br><span style="opacity:.6">SCROLL TO ZOOM · SPACE TO PAN</span></div>
@@ -431,6 +455,15 @@ kbd{font-family:var(--mono);font-size:10px;background:rgba(255,255,255,.07);bord
         <button data-mirror="y" aria-pressed="false">Y</button>
         <button data-mirror="xy" aria-pressed="false">BOTH</button>
       </div></div>
+    <div class="row"><label for="in-rot">ROTATE</label>
+      <input type="range" id="in-rot" min="-180" max="180" step="1" value="0">
+      <input type="number" id="num-rot" min="-180" max="180" value="0" aria-label="Canvas rotation"><output id="out-rot">0</output></div>
+    <div class="row"><label>GRID</label>
+      <div class="miniseg" id="gridseg">
+        <button data-grid="0" aria-pressed="true">OFF</button>
+        <button data-grid="1" aria-pressed="false">ON</button>
+      </div></div>
+    <div class="row"><button id="snapcenter" class="chip">SNAP TO CENTER</button></div>
     <div class="ratio" id="teethtag">TEETH 32 · 11</div>
   </div>
   <!-- PEN -->
@@ -565,9 +598,26 @@ kbd{font-family:var(--mono);font-size:10px;background:rgba(255,255,255,.07);bord
   <button id="zoomtxt" aria-label="Reset view" title="Reset view">100%</button>
 </div>
 
+<div class="chrome glass" id="threedbar" role="group" aria-label="3D controls">
+  <div class="t3row"><label for="in-depth">DEPTH</label>
+    <input type="range" id="in-depth" min="0" max="2.2" step="0.05" value="0.9" aria-label="3D depth"></div>
+  <div class="t3row"><label for="in-tube">TUBE</label>
+    <input type="range" id="in-tube" min="0.012" max="0.16" step="0.004" value="0.055" aria-label="Tube thickness"></div>
+  <div class="t3row"><label for="in-bloom">BLOOM</label>
+    <input type="range" id="in-bloom" min="0" max="2.2" step="0.05" value="0.6" aria-label="Bloom strength"></div>
+  <div class="t3row"><label for="in-spin">SPIN</label>
+    <input type="range" id="in-spin" min="0" max="4" step="0.1" value="1" aria-label="Auto-rotate speed"></div>
+  <div class="t3btns">
+    <button class="chip" id="snap3d">SNAP PNG</button>
+    <button class="chip" id="rec3d">REC LOOP</button>
+  </div>
+</div>
+
 <div class="chrome glass" id="viewtoggles">
   <button class="icobtn" id="threedbtn" aria-pressed="false" aria-label="3D mode" title="3D spiro">
     <svg viewBox="0 0 24 24"><path d="M12 2.5 21 7.5v9L12 21.5 3 16.5v-9Z"/><path d="M12 2.5v19M21 7.5l-9 5-9-5"/></svg></button>
+  <button class="icobtn" id="erasebtn" aria-pressed="false" aria-label="Eraser" title="Eraser — tap a stroke to delete (E)">
+    <svg viewBox="0 0 24 24"><path d="m15.5 3.5 5 5L11 18H6l-2.5-2.5Z"/><path d="M9.5 9.5 15 15M4 21h16"/></svg></button>
   <button class="icobtn" id="gearvis" aria-pressed="true" aria-label="Show gears" title="Show gears (G)">
     <svg viewBox="0 0 24 24"><circle cx="10" cy="12" r="7"/><circle cx="14" cy="12" r="3"/><circle cx="15.6" cy="12" r=".8" fill="currentColor"/></svg></button>
   <button class="icobtn" id="focusbtn" aria-pressed="false" aria-label="Presentation mode" title="Presentation mode (Tab)">
@@ -623,6 +673,8 @@ const S = {
   textCoil:true,          // legible tight-coil writing vs abstract spiro
   textLoop:false,         // keep re-writing the word, building density (ambient mode)
   textTrace:'center',     // center (stroke skeleton, like handwriting) | edge (outline)
+  grid:false,             // world-space grid overlay
+  erase:false,            // eraser: tap a stroke to delete it
   symCount:1,             // radial symmetry copies around the world origin
   mirror:'none',          // none | x | y | xy
   pen:{ color:'#e8e6e1', width:1.1, opacity:0.9, grad:'solid', style:'line', count:1, gap:9 },
@@ -654,6 +706,9 @@ const V = {
       c.height = Math.round(this.h*this.dpr);
       c.style.width = this.w+'px'; c.style.height = this.h+'px';
     }
+    const gl=document.getElementById('gl');
+    if(gl){ gl.style.width=this.w+'px'; gl.style.height=this.h+'px'; }
+    if(typeof Orb!=='undefined') Orb.resize();
     Renderer.repaintAll();
   },
   apply(ctx){
@@ -667,6 +722,10 @@ const V = {
     const dx=px - this.w/2, dy=py - this.h/2, c=Math.cos(this.rot), s=Math.sin(this.rot);
     return { x:this.cam.x + (c*dx + s*dy)/this.zoom,
              y:this.cam.y + (-s*dx + c*dy)/this.zoom }; },
+  w2s(wx,wy){
+    const dx=(wx-this.cam.x)*this.zoom, dy=(wy-this.cam.y)*this.zoom;
+    const c=Math.cos(this.rot), s=Math.sin(this.rot);
+    return { x:this.w/2 + c*dx - s*dy, y:this.h/2 + s*dx + c*dy }; },
   zoomAt(px,py,factor){
     const before = this.s2w(px,py);
     this.zoom = clamp(this.zoom*factor, 0.08, 12);
@@ -897,6 +956,37 @@ const Renderer = {
   },
   endActive(){ this.actives=[]; },
 
+  /* world-space grid; spacing adapts so lines stay ~40-120px apart */
+  drawGrid(){
+    if(!S.grid) return;
+    let step=10; while(step*V.zoom < 42) step*=(step.toString()[0]==='1'?2.5:2);
+    while(step*V.zoom > 130) step/=(step.toString()[0]==='2'?2:2.5);
+    // cover the rotated viewport: use the circumscribed radius
+    const rad=Math.hypot(V.w,V.h)/2/V.zoom + step*2;
+    const cx=V.cam.x, cy=V.cam.y;
+    const x0=Math.floor((cx-rad)/step)*step, x1=cx+rad;
+    const y0=Math.floor((cy-rad)/step)*step, y1=cy+rad;
+    V.apply(liveX);
+    liveX.save();
+    liveX.lineWidth=1/V.zoom;
+    for(let pass=0;pass<2;pass++){
+      liveX.strokeStyle = pass? 'rgba(232,230,225,.14)' : 'rgba(232,230,225,.055)';
+      liveX.beginPath();
+      for(let x=x0;x<=x1;x+=step){ const major=Math.abs(Math.round(x/step))%5===0;
+        if(major!==!!pass) continue; liveX.moveTo(x,y0); liveX.lineTo(x,y1); }
+      for(let y=y0;y<=y1;y+=step){ const major=Math.abs(Math.round(y/step))%5===0;
+        if(major!==!!pass) continue; liveX.moveTo(x0,y); liveX.lineTo(x1,y); }
+      liveX.stroke();
+    }
+    // origin crosshair
+    liveX.strokeStyle='rgba(110,164,196,.5)';
+    liveX.beginPath();
+    liveX.moveTo(-step/2,0); liveX.lineTo(step/2,0);
+    liveX.moveTo(0,-step/2); liveX.lineTo(0,step/2);
+    liveX.stroke();
+    liveX.restore();
+  },
+
   /* dashed guide path for free-path mode (caller clears the live layer) */
   drawGuide(){
     const capturing = Input.pathing && Guide.raw.length>1;
@@ -997,6 +1087,7 @@ const History = {
     const L=c.layer||Strokes.list;
     if(c.type==='stroke'){ L.pop(); }
     else if(c.type==='strokes'){ L.length=Math.max(0,L.length-c.strokes.length); }
+    else if(c.type==='erase'){ L.splice(Math.min(c.index,L.length),0,c.stroke); }
     else if(c.type==='clear'){ L.push(...c.strokes); }
     this.redoStack.push(c); Renderer.repaintAll(); UI.syncHistory();
   },
@@ -1005,6 +1096,7 @@ const History = {
     const L=c.layer||Strokes.list;
     if(c.type==='stroke'){ L.push(c.stroke); }
     else if(c.type==='strokes'){ L.push(...c.strokes); }
+    else if(c.type==='erase'){ const i=L.indexOf(c.stroke); if(i>=0) L.splice(i,1); }
     else if(c.type==='clear'){ L.length=0; }
     this.undoStack.push(c); Renderer.repaintAll(); UI.syncHistory();
   },
@@ -1071,6 +1163,35 @@ const Session = {
   }
 };
 
+/* ---------------- Eraser ---------------- */
+const Eraser = {
+  // nearest visible stroke within `tol` screen px, else null
+  pick(px,py,tol){
+    let best=null, bestD=(tol||24)**2;
+    for(const L of Layers.list){ if(!L.visible) continue;
+      for(let si=0; si<L.strokes.length; si++){
+        const s=L.strokes[si], p=s.pts;
+        // stride keeps very long strokes cheap to test
+        const stride=Math.max(2, 2*Math.ceil(p.length/2/900));
+        for(let i=0;i<p.length;i+=stride){
+          const q=V.w2s(p[i],p[i+1]);
+          const dx=q.x-px, dy=q.y-py, d=dx*dx+dy*dy;
+          if(d<bestD){ bestD=d; best={layer:L, index:si, stroke:s}; }
+        }
+      }
+    }
+    return best;
+  },
+  eraseAt(px,py){
+    const hit=this.pick(px,py, matchMedia('(pointer:coarse)').matches?30:22);
+    if(!hit){ UI.toast('NOTHING TO ERASE'); return false; }
+    hit.layer.strokes.splice(hit.index,1);
+    History.push({type:'erase', stroke:hit.stroke, index:hit.index, layer:hit.layer.strokes});
+    Renderer.repaintAll(); UI.renderLayers(); UI.haptic(12); UI.toast('ERASED');
+    return true;
+  }
+};
+
 /* ---------------- Pointer input ---------------- */
 const Input = {
   pointers:new Map(),
@@ -1089,7 +1210,7 @@ const Input = {
     el.addEventListener('wheel', e=>{
       e.preventDefault();
       const f = Math.exp(-e.deltaY*0.0016);
-      if(Orb.on) Orb.zoom(f); else V.zoomAt(e.clientX,e.clientY,f);
+      V.zoomAt(e.clientX,e.clientY,f);
     }, {passive:false});
     window.addEventListener('keydown',e=>{ if(e.code==='Space'&&!e.repeat&&!UI.inField(e)){this.spaceHeld=true;e.preventDefault();document.body.style.cursor='grab';} });
     window.addEventListener('keyup',e=>{ if(e.code==='Space'){this.spaceHeld=false;document.body.style.cursor='';} });
@@ -1100,14 +1221,14 @@ const Input = {
     try{ liveC.setPointerCapture(e.pointerId); }catch(err){}
     this.pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
 
-    // 3D orbit takes over the canvas entirely
-    if(Orb.on){
-      if(this.pointers.size===2){ const pts=[...this.pointers.values()];
-        this.pinch={ d:Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y) }; Orb.dragging=false; return; }
-      Orb.down(e); return;
-    }
     // any tap exits kiosk mode
     if(Kiosk.on){ Kiosk.stop(); this.consumed=e.pointerId; return; }
+
+    // eraser: tap a stroke to remove it (single pointer only)
+    if(S.erase && this.pointers.size===1){
+      Eraser.eraseAt(e.clientX,e.clientY);
+      this.consumed=e.pointerId; return;
+    }
 
     // a tap on the canvas while a panel/menu is open dismisses it (touch)
     if(e.pointerType==='touch' && this.pointers.size===1){
@@ -1169,13 +1290,6 @@ const Input = {
     }
     const rec=this.pointers.get(e.pointerId);
     rec.x=e.clientX; rec.y=e.clientY;
-
-    if(Orb.on){
-      if(this.pinch && this.pointers.size===2){ const pts=[...this.pointers.values()];
-        const d=Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y);
-        if(this.pinch.d>0) Orb.zoom(d/this.pinch.d); this.pinch.d=d; return; }
-      Orb.move(e); return;
-    }
 
     if(this.pinch && this.pointers.size===2){
       const pts=[...this.pointers.values()];
@@ -1246,7 +1360,6 @@ const Input = {
   up(e){
     this.pointers.delete(e.pointerId);
     if(this.pointers.size<2) this.pinch=null;
-    if(Orb.on){ if(this.pointers.size===0) Orb.up(); return; }
     if(this.consumed===e.pointerId){ this.consumed=null; return; }
     if(this.panning && this.pointers.size===0){ this.panning=false; document.body.style.cursor=this.spaceHeld?'grab':''; }
     if(this.pathing && this.pointers.size===0){
@@ -1743,77 +1856,36 @@ const Kiosk = {
   }
 };
 
-/* ---------------- 3D spirograph (self-contained projection) ----------------
-   A toroidal winding derived from the current gears, rendered as a glowing
-   depth-shaded wireframe you can orbit with a finger.                    */
+/* ---------------- 3D mode (delegates to the three.js module) ----------------
+   Real meshes, materials, lighting and bloom live in spiro3d.js; this thin
+   controller wires it to app state and the interface.                    */
 const Orb = {
-  on:false, rx:-0.55, ry:0.6, auto:0.16, scale:1, dragging:false, lastT:0, px:0, py:0,
-  toggle(){ this.on?this.stop():this.start(); },
+  get avail(){ return !!window.Spiro3D; },
+  get on(){ return !!(window.Spiro3D && window.Spiro3D.on); },
+  gear(){ return {R:S.R, r:S.r, d:S.d, curve:S.curve}; },
+  toggle(){ this.on ? this.stop() : this.start(); },
   start(){
+    const M=window.Spiro3D;
+    if(!M){ UI.toast(performance.now()>5000 ? '3D UNAVAILABLE HERE' : '3D ENGINE LOADING…'); return; }
     if(Auto.running) Auto.stop(); if(Path.running) Path.stop();
-    this.on=true; this.lastT=performance.now();
-    document.body.classList.add('threed'); Wake.on();
-    this.$btn(); UI.toast('3D · DRAG TO ORBIT');
+    if(Kiosk.on) Kiosk.stop();
+    if(!M.ready && !M.init(document.getElementById('gl'))){
+      UI.toast('3D UNAVAILABLE'); return;
+    }
+    document.body.classList.add('threed');
+    if(!M.start(this.gear(), S.pen, V.w, V.h)){ document.body.classList.remove('threed'); UI.toast('3D FAILED'); return; }
+    Wake.on(); this.sync(); UI.toast('3D · DRAG TO ORBIT');
   },
   stop(){
-    this.on=false; document.body.classList.remove('threed');
+    const M=window.Spiro3D; if(M) M.stop();
+    document.body.classList.remove('threed');
     if(!(Auto.running||Path.running)) Wake.off();
-    this.$btn(); Renderer.clearOverlay(); Renderer.repaintAll();
+    this.sync(); Renderer.repaintAll();
   },
-  $btn(){ const b=UI.$('threedbtn'); if(b) b.setAttribute('aria-pressed', this.on); },
-  points(){
-    const R=Math.max(20,S.R), d=Math.max(6,S.d||20), r=Math.max(4,S.r);
-    const k=Math.max(2, Math.round(R/r));       // windings around the ring
-    const N=2400, out=[];
-    for(let i=0;i<=N;i++){ const t=i/N*TAU;
-      const rr=R + d*Math.cos(k*t);
-      out.push([ rr*Math.cos(t), rr*Math.sin(t), d*Math.sin(k*t) ]);
-    }
-    return out;
-  },
-  render(){
-    liveX.setTransform(1,0,0,1,0,0);
-    liveX.clearRect(0,0,liveC.width,liveC.height);
-    liveX.setTransform(V.dpr,0,0,V.dpr,0,0);
-    const cx=V.w/2, cy=V.h/2;
-    const R=Math.max(20,S.R), d=Math.max(6,S.d||20);
-    const fit=Math.min(V.w,V.h)*0.34*this.scale/(R+d+1);
-    const crx=Math.cos(this.rx), srx=Math.sin(this.rx), cry=Math.cos(this.ry), sry=Math.sin(this.ry);
-    const pts=this.points(), proj=[];
-    let zmin=1e9, zmax=-1e9;
-    for(const [x,y,z] of pts){
-      const X=x*cry + z*sry, Z=-x*sry + z*cry;   // yaw
-      const Y=y*crx - Z*srx, Z2=y*srx + Z*crx;    // pitch
-      const persp=1/(1 - Z2*fit/1400);
-      proj.push([cx+X*fit*persp, cy+Y*fit*persp, Z2]);
-      if(Z2<zmin)zmin=Z2; if(Z2>zmax)zmax=Z2;
-    }
-    const base=hexToHsl(S.pen.color), zr=(zmax-zmin)||1;
-    liveX.lineCap='round'; liveX.lineJoin='round';
-    liveX.strokeStyle=`hsl(${base[0]} ${Math.max(base[1],55)}% ${clamp(base[2],48,70)}%)`;
-    for(let i=1;i<proj.length;i++){
-      const a=proj[i-1], b=proj[i];
-      const zt=(((a[2]+b[2])/2)-zmin)/zr;         // 0 far … 1 near
-      liveX.globalAlpha=(0.18+0.82*zt)*S.pen.opacity;
-      liveX.lineWidth=(0.5+2.4*zt)*S.pen.width;
-      liveX.shadowColor=S.pen.color; liveX.shadowBlur=7*zt;
-      liveX.beginPath(); liveX.moveTo(a[0],a[1]); liveX.lineTo(b[0],b[1]); liveX.stroke();
-    }
-    liveX.shadowBlur=0; liveX.globalAlpha=1;
-  },
-  // orbit interaction
-  down(e){ this.dragging=true; this.px=e.clientX; this.py=e.clientY; },
-  move(e){ if(!this.dragging) return;
-    this.ry += (e.clientX-this.px)*0.008; this.rx += (e.clientY-this.py)*0.008;
-    this.rx=clamp(this.rx,-1.5,1.5); this.px=e.clientX; this.py=e.clientY; },
-  up(){ this.dragging=false; },
-  zoom(f){ this.scale=clamp(this.scale*f,0.3,4); },
-  tick(now){
-    if(!this.on) return;
-    const dt=Math.min((now-this.lastT)/1000,0.05); this.lastT=now;
-    if(!this.dragging) this.ry += this.auto*dt;
-    this.render();
-  }
+  rebuild(){ const M=window.Spiro3D; if(M && M.on) M.build(this.gear(), S.pen); },
+  set(k,v){ const M=window.Spiro3D; if(M) M.set(k,v); if(M && M.on) M.applyIfNeeded(this.gear(), S.pen); },
+  resize(){ const M=window.Spiro3D; if(M && M.on) M.resize(V.w,V.h); },
+  sync(){ const b=UI.$('threedbtn'); if(b) b.setAttribute('aria-pressed', this.on); }
 };
 
 /* ---------------- UI ---------------- */
@@ -1861,15 +1933,22 @@ const UI = {
     this.$('importfile').onchange=e=>{ if(e.target.files[0]){ Project.importFile(e.target.files[0]); this.toggleOutput(false); } e.target.value=''; };
     this.$('gearvis').onclick=()=>{ S.showGears=!S.showGears; this.$('gearvis').setAttribute('aria-pressed',S.showGears); this.haptic(); };
     this.$('threedbtn').onclick=()=>{ Orb.toggle(); this.haptic(); };
+    this.$('erasebtn').onclick=()=>this.setErase(!S.erase);
+    this.$('snapcenter').onclick=()=>this.snapCenter();
+    // 3D contextual bar
+    const bind3=(id,key)=>{ const el=this.$(id); el.addEventListener('input',()=>Orb.set(key, parseFloat(el.value))); };
+    bind3('in-depth','depth'); bind3('in-tube','tube'); bind3('in-bloom','bloom'); bind3('in-spin','spin');
+    this.$('snap3d').onclick=()=>this.snap3D();
+    this.$('rec3d').onclick=()=>this.rec3D();
     this.$('focusbtn').onclick=()=>this.setFocus(!document.body.classList.contains('focusmode'));
     this.$('focuschip').onclick=()=>this.setFocus(false);
     this.$('keysbtn').onclick=()=>this.$('keys').classList.toggle('open');
     this.$('keys').onclick=e=>{ if(e.target.id==='keys') this.$('keys').classList.remove('open'); };
 
     // sliders <-> numbers <-> state
-    this.bind('R', v=>{ S.R=v; if(S.curve==='hypo'&&S.r>=S.R) this.setVal('r',S.R-4); this.syncGearTags(); });
-    this.bind('r', v=>{ S.r=v; if(S.curve==='hypo'&&S.r>=S.R) this.setVal('R',S.r+4); this.syncGearTags(); });
-    this.bind('d', v=>{ S.d=v; });
+    this.bind('R', v=>{ S.R=v; if(S.curve==='hypo'&&S.r>=S.R) this.setVal('r',S.R-4); this.syncGearTags(); Orb.rebuild(); });
+    this.bind('r', v=>{ S.r=v; if(S.curve==='hypo'&&S.r>=S.R) this.setVal('R',S.r+4); this.syncGearTags(); Orb.rebuild(); });
+    this.bind('d', v=>{ S.d=v; Orb.rebuild(); });
     this.bind('w', v=>{ S.pen.width=v; });
     this.bind('o', v=>{ S.pen.opacity=v; });
     this.bind('sp',v=>{ S.speed=v; });
@@ -1878,6 +1957,7 @@ const UI = {
     this.bind('ts',v=>{ S.textSize=v; });
     this.bind('lo',v=>{ const L=Layers.current(); if(L){ L.opacity=v; Renderer.repaintAll(); } });
     this.bind('sym',v=>{ S.symCount=v; Renderer.repaintAll(); });
+    this.bind('rot',v=>{ V.rot=v*Math.PI/180; Renderer.repaintAll(); });
     this.bind('pens',v=>{ S.pen.count=v; });
     this.bind('gap',v=>{ S.pen.gap=v; });
 
@@ -1893,6 +1973,7 @@ const UI = {
     seg('#texttraceseg', b=>{ S.textTrace=b.dataset.trace; });
     seg('#strokeseg', b=>{ S.pen.style=b.dataset.pstyle; });
     seg('#mirrorseg', b=>{ S.mirror=b.dataset.mirror; Renderer.repaintAll(); });
+    seg('#gridseg', b=>{ S.grid=b.dataset.grid==='1'; });
     seg('#blendseg', b=>{ const L=Layers.current(); if(L){ L.blend=b.dataset.blend; Renderer.repaintAll(); } });
 
     // presets + autonomous compose
@@ -1918,7 +1999,7 @@ const UI = {
         S.curve=b.dataset.curve;
         document.querySelectorAll('#curveseg button').forEach(x=>x.setAttribute('aria-pressed',x===b));
         if(S.curve==='hypo'&&S.r>=S.R) this.setVal('r',S.R-4);
-        this.syncGearTags();
+        this.syncGearTags(); Orb.rebuild();
       };
     });
     document.querySelectorAll('#dirseg button').forEach(b=>{
@@ -1933,7 +2014,7 @@ const UI = {
       b.onclick=()=>{
         S.pen.color=b.dataset.c;
         document.querySelectorAll('.sw').forEach(x=>x.setAttribute('aria-pressed',x===b));
-        this.haptic();
+        Orb.rebuild(); this.haptic();
       };
     });
 
@@ -2011,6 +2092,46 @@ const UI = {
     if(S.textLoop) this.toast(S.symCount>1?'AMBIENT MANDALA · TAP RUN TO STOP':'REPEATING · TAP RUN TO STOP');
   },
 
+  setErase(on){
+    S.erase=!!on;
+    this.$('erasebtn').setAttribute('aria-pressed', S.erase);
+    document.body.classList.toggle('erasing', S.erase);
+    if(S.erase){ if(Auto.running) Auto.stop(); if(Path.running) Path.stop(); }
+    this.haptic();
+    this.toast(S.erase?'ERASER · TAP A STROKE':'ERASER OFF');
+  },
+  // put the mechanism at the world origin and centre the view on it
+  snapCenter(){
+    S.anchor={x:0,y:0};
+    V.cam.x=0; V.cam.y=0;
+    if(Auto.running){ Auto.stop(); Auto.start(); }
+    Renderer.repaintAll(); this.syncZoom(); this.haptic(); this.toast('SNAPPED TO CENTRE');
+  },
+
+  // 3D export
+  async snap3D(){
+    const M=window.Spiro3D; if(!M||!M.on) return;
+    const btn=this.$('snap3d'); btn.textContent='RENDERING…'; btn.disabled=true;
+    try{
+      const blob=await M.snapshot(2.5);
+      if(blob){ download(blob,'spirokraft-3d-'+stamp()+'.png'); this.toast('3D PNG SAVED'); }
+      else this.toast('SNAPSHOT FAILED');
+    }catch(e){ this.toast('SNAPSHOT FAILED'); }
+    btn.textContent='SNAP PNG'; btn.disabled=false;
+  },
+  rec3D(){
+    const M=window.Spiro3D; if(!M||!M.on) return;
+    const btn=this.$('rec3d');
+    if(M.recording()){ M.stopRecord(); return; }
+    const ok=M.startRecord(
+      blob=>{ btn.classList.remove('recording'); btn.textContent='REC LOOP';
+        if(blob && blob.size){ download(blob,'spirokraft-3d-'+stamp()+'.webm'); this.toast('LOOP SAVED'); }
+        else this.toast('RECORDING FAILED'); },
+      p=>{ btn.textContent='REC '+Math.round(p*100)+'%'; });
+    if(ok){ btn.classList.add('recording'); this.toast('RECORDING ONE FULL TURN'); }
+    else this.toast('RECORDING UNSUPPORTED');
+  },
+
   // output menu
   toggleOutput(force){
     const p=this.$('outputpanel');
@@ -2041,6 +2162,7 @@ const UI = {
     const sym=[1,2,3,4,6,8,12][(Math.random()*7)|0]; this.setVal('sym',sym);
     S.mirror=['none','none','x','xy'][(Math.random()*4)|0];
     document.querySelectorAll('#mirrorseg button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.mirror===S.mirror));
+    document.querySelectorAll('#gridseg button').forEach(x=>x.setAttribute('aria-pressed',(x.dataset.grid==='1')===S.grid));
     S.anchor={x:(Math.random()-0.5)*140, y:(Math.random()-0.5)*140};
     Renderer.repaintAll();
     this.setMode('auto'); if(!Auto.running) Auto.start();
@@ -2215,6 +2337,7 @@ const UI = {
     switch(e.key){
       case 'p': case 'P': this.togglePause(); break;
       case 'g': case 'G': this.$('gearvis').click(); break;
+      case 'e': case 'E': this.setErase(!S.erase); break;
       case 'r': case 'R':
         S.dir*=-1;
         document.querySelectorAll('#dirseg button').forEach(x=>x.setAttribute('aria-pressed',+x.dataset.dir===S.dir));
@@ -2247,7 +2370,7 @@ const UI = {
 
 /* ---------------- main loop ---------------- */
 function frame(now){
-  if(Orb.on){ Orb.tick(now); requestAnimationFrame(frame); return; }
+  if(Orb.on){ requestAnimationFrame(frame); return; }   // three.js runs its own loop
   Auto.tick(now);
   Path.tick(now);
   Replay.tick();
@@ -2256,6 +2379,7 @@ function frame(now){
   // live layer: clear once, draw the guide beneath the mechanism readout
   Renderer.clearOverlay();
   if(!Kiosk.on){
+    Renderer.drawGrid();
     if(S.mode==='path') Renderer.drawGuide();
     const showMech = !Path.group;   // hide the gear ghost while writing text
     if(Session.live) Renderer.overlay(Session.t,Session.cx,Session.cy,Session.ang,showMech);
@@ -2276,5 +2400,10 @@ if(matchMedia('(pointer:coarse)').matches){
 }
 setTimeout(()=>UI.dismissHint(),6000);
 </script>
+
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/three.module.js" } }
+</script>
+<script type="module" src="./spiro3d.js"></script>
 </body>
 </html>
