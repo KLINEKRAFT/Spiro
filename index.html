@@ -4,6 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
 <title>SPIROKRAFT</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="theme-color" content="#070708">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Spiro">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500&family=Dancing+Script:wght@600;700&display=swap" rel="stylesheet">
@@ -280,8 +288,19 @@ kbd{font-family:var(--mono);font-size:10px;background:rgba(255,255,255,.07);bord
   .seg{height:44px}
   .icobtn{height:44px;width:44px}
   .dockbtn{min-width:56px;height:54px}
-  /* taller dock → lift the contextual panel to keep an even gap above it */
-  #panel{bottom:calc(env(safe-area-inset-bottom) + 90px)}
+  /* taller dock → lift the contextual panel to keep an even gap above it,
+     and keep it compact so the artwork stays visible behind it */
+  #panel{bottom:calc(env(safe-area-inset-bottom) + 90px);
+    max-height:min(46dvh, calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 108px));
+    padding:14px 14px 12px}
+  .row label{font-size:10px}
+  .ptitle{font-size:10px}
+  /* while the machine is drawing, let the artwork show through the panel */
+  body.playing #panel.open{
+    background:rgba(8,9,11,.34);
+    backdrop-filter:blur(3px) saturate(1.1);-webkit-backdrop-filter:blur(3px) saturate(1.1);
+    box-shadow:0 6px 22px rgba(0,0,0,.3);
+  }
 }
 
 @media (max-width:560px){
@@ -434,6 +453,13 @@ kbd{font-family:var(--mono);font-size:10px;background:rgba(255,255,255,.07);bord
         <button data-grad="velocity" aria-pressed="false">SPEED</button>
         <button data-grad="angle" aria-pressed="false">ANGLE</button>
       </div></div>
+    <div class="row"><label>STROKE</label>
+      <div class="miniseg" id="strokeseg">
+        <button data-pstyle="line" aria-pressed="true">LINE</button>
+        <button data-pstyle="dash" aria-pressed="false">DASH</button>
+        <button data-pstyle="dot" aria-pressed="false">DOT</button>
+        <button data-pstyle="glow" aria-pressed="false">GLOW</button>
+      </div></div>
   </div>
   <!-- SPEED -->
   <div data-view="speed" hidden>
@@ -492,6 +518,11 @@ kbd{font-family:var(--mono);font-size:10px;background:rgba(255,255,255,.07);bord
       <div class="miniseg" id="textstyleseg">
         <button data-coil="1" aria-pressed="true">COIL</button>
         <button data-coil="0" aria-pressed="false">SPIRO</button>
+      </div></div>
+    <div class="row"><label>TRACE</label>
+      <div class="miniseg" id="texttraceseg">
+        <button data-trace="center" aria-pressed="true">CENTER</button>
+        <button data-trace="edge" aria-pressed="false">EDGE</button>
       </div></div>
     <div class="row"><label>REPEAT</label>
       <div class="miniseg" id="textrepeatseg">
@@ -579,9 +610,10 @@ const S = {
   textSize:320,           // world height of written script text
   textCoil:true,          // legible tight-coil writing vs abstract spiro
   textLoop:false,         // keep re-writing the word, building density (ambient mode)
+  textTrace:'center',     // center (stroke skeleton, like handwriting) | edge (outline)
   symCount:1,             // radial symmetry copies around the world origin
   mirror:'none',          // none | x | y | xy
-  pen:{ color:'#e8e6e1', width:1.1, opacity:0.9, grad:'solid' },
+  pen:{ color:'#e8e6e1', width:1.1, opacity:0.9, grad:'solid', style:'line' },
   showGears:true,
   autoRunning:false,
   anchor:{x:0,y:0},       // world pos of mechanism when idle / auto
@@ -686,7 +718,13 @@ function hexToHsl(hex){
 /* ---------------- Strokes + Layers (world-space artwork model) ---------------- */
 function newStroke(){
   return { pts:[], color:S.pen.color, width:S.pen.width, opacity:S.pen.opacity,
-           grad:S.pen.grad, hsl:hexToHsl(S.pen.color), path:null };
+           grad:S.pen.grad, style:S.pen.style, hsl:hexToHsl(S.pen.color), path:null, _plen:0 };
+}
+// per-stroke dash pattern (scaled to line width); dots come from zero-length dashes + round caps
+function dashFor(s){
+  if(s.style==='dash') return [Math.max(4,s.width*4), Math.max(3,s.width*2.6)];
+  if(s.style==='dot')  return [0.01, Math.max(4,s.width*3.2)];
+  return null;
 }
 const BLEND={normal:'source-over',screen:'screen',add:'lighter',multiply:'multiply'};
 const Layers = {
@@ -774,14 +812,25 @@ const Renderer = {
     const T=symTransforms();
     for(const m of T){ ctx.save(); ctx.transform(m[0],m[1],m[2],m[3],0,0); fn(); ctx.restore(); }
   },
+  // apply per-stroke pen style; dash/dot only for solid-colour strokes
+  applyStyle(ctx,s,offset){
+    const dash = (!s.grad || s.grad==='solid') ? dashFor(s) : null;
+    ctx.setLineDash(dash||[]);
+    ctx.lineDashOffset = dash ? -(offset||0) : 0;
+    if(s.style==='glow'){ ctx.shadowColor=s.color; ctx.shadowBlur=Math.max(7,s.width*5); }
+    else { ctx.shadowBlur=0; }
+  },
+  clearStyle(ctx){ ctx.setLineDash([]); ctx.lineDashOffset=0; ctx.shadowBlur=0; },
   paintStroke(ctx,s,layerAlpha){
     if(s.pts.length<4) return;
     ctx.globalAlpha=s.opacity*(layerAlpha==null?1:layerAlpha);
     ctx.lineWidth=s.width; ctx.lineCap='round'; ctx.lineJoin='round';
+    this.applyStyle(ctx,s,0);
     const draw = (s.grad && s.grad!=='solid')
       ? ()=>this.strokeGradient(ctx,s,2,s.pts.length)
       : ()=>{ ctx.strokeStyle=s.color; ctx.stroke(this.strokePath(s)); };
     this.withSym(ctx, draw);
+    this.clearStyle(ctx);
   },
   repaintAll(){
     artX.setTransform(1,0,0,1,0,0);
@@ -804,11 +853,16 @@ const Renderer = {
     const la=Layers.current().opacity;
     artX.globalAlpha=s.opacity*la; artX.lineWidth=s.width; artX.lineCap='round'; artX.lineJoin='round';
     const start=Math.max(0,this.activeDrawn-2);
+    this.applyStyle(artX,s,s._plen||0);      // dash offset = length painted so far
     const draw = (s.grad && s.grad!=='solid')
       ? ()=>this.strokeGradient(artX,s,start+2,n)
       : ()=>{ artX.strokeStyle=s.color; artX.beginPath(); artX.moveTo(s.pts[start],s.pts[start+1]);
               for(let i=start+2;i<n;i+=2) artX.lineTo(s.pts[i],s.pts[i+1]); artX.stroke(); };
     this.withSym(artX, draw);
+    this.clearStyle(artX);
+    // accumulate painted length so live dashes stay continuous across increments
+    let add=0; for(let i=start+2;i<n;i+=2) add+=Math.hypot(s.pts[i]-s.pts[i-2], s.pts[i+1]-s.pts[i-1]);
+    s._plen=(s._plen||0)+add;
     this.activeDrawn=n;
   },
   endActive(){ this.active=null; },
@@ -966,6 +1020,15 @@ const Session = {
       if(collector) collector.push(st);           // grouped (e.g. a written word)
       else History.push({type:'stroke', stroke:st, layer:Strokes.list});
     }else{ Strokes.list.pop(); Renderer.repaintAll(); }
+  },
+  // discard the active stroke entirely — the gesture turned out not to be a draw
+  abandon(){
+    if(!this.live) return;
+    this.live=false;
+    Renderer.endActive();
+    if(this.stroke){ const i=Strokes.list.indexOf(this.stroke); if(i>=0) Strokes.list.splice(i,1); }
+    this.stroke=null;
+    Renderer.repaintAll();
   }
 };
 
@@ -973,6 +1036,8 @@ const Session = {
 const Input = {
   pointers:new Map(),
   drawing:false, pathing:false, panning:false, spaceHeld:false,
+  pathStarted:false, pathBuf:null, guideBak:undefined,
+  tap:null, consumed:null,
   smX:0, smY:0, lastX:0, lastY:0,
   pinch:null, lastTap:0,
 
@@ -993,20 +1058,30 @@ const Input = {
 
   down(e){
     UI.dismissHint();
-    liveC.setPointerCapture(e.pointerId);
+    try{ liveC.setPointerCapture(e.pointerId); }catch(err){}
     this.pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+
+    // a tap on the canvas while a panel/menu is open dismisses it (touch)
+    if(e.pointerType==='touch' && this.pointers.size===1){
+      if(UI.panelOpen || document.getElementById('outputpanel').classList.contains('open')){
+        UI.closePanel(); UI.toggleOutput(false);
+        this.consumed=e.pointerId; return;
+      }
+    }
 
     // double-tap pause (touch)
     if(e.pointerType==='touch' && this.pointers.size===1){
       const now=performance.now();
-      if(now-this.lastTap<300){ UI.togglePause(); this.lastTap=0; return; }
+      if(now-this.lastTap<300){ UI.togglePause(); this.lastTap=0; this.consumed=e.pointerId; return; }
       this.lastTap=now;
     }
 
     if(this.pointers.size===2){
-      // switch to pinch/pan; abandon draw / path capture
-      if(this.drawing){ Session.end(); this.drawing=false; }
-      this.pathing=false;
+      // pinch: the first finger's action wasn't intent — undo it cleanly
+      if(this.drawing){ Session.abandon(); this.drawing=false; }
+      if(this.pathing){ this.pathing=false; this.pathStarted=false;
+        if(this.guideBak!==undefined){ Guide.data=this.guideBak; this.guideBak=undefined; } }
+      this.tap=null;
       const pts=[...this.pointers.values()];
       this.pinch={ d:Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y),
                    cx:(pts[0].x+pts[1].x)/2, cy:(pts[0].y+pts[1].y)/2 };
@@ -1020,20 +1095,15 @@ const Input = {
     }
 
     if(S.mode==='path'){
-      // draw a fresh guide path; the mechanism will trace it on RUN
-      if(Path.running) Path.stop();
-      Guide.reset();
-      const w=V.s2w(e.clientX,e.clientY);
-      Guide.addRaw(w.x,w.y);
-      this.pathing=true;
+      // defer: only becomes a guide capture once the finger actually drags
+      this.pathing=true; this.pathStarted=false;
+      this.pathBuf=[{x:e.clientX,y:e.clientY}];
       return;
     }
 
     if(S.mode==='auto'){
-      // place / reposition the mechanism
-      const w=V.s2w(e.clientX,e.clientY);
-      S.anchor=w;
-      if(Auto.running){ Auto.stop(); Auto.start(); }
+      // defer reposition to pointer-up so a pinch never moves the mechanism
+      this.tap={x:e.clientX,y:e.clientY,t:performance.now()};
       return;
     }
 
@@ -1073,7 +1143,21 @@ const Input = {
 
     if(this.pathing){
       const evts = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
-      for(const ev of evts){ const w=V.s2w(ev.clientX,ev.clientY); Guide.addRaw(w.x,w.y); }
+      for(const ev of evts){
+        if(!this.pathStarted){
+          this.pathBuf.push({x:ev.clientX,y:ev.clientY});
+          const d0=Math.hypot(ev.clientX-this.pathBuf[0].x, ev.clientY-this.pathBuf[0].y);
+          if(d0<9) continue;                      // not a drag yet — could be a tap or pinch
+          // it's a real drag: now commit to capturing a fresh guide
+          this.pathStarted=true;
+          if(Path.running) Path.stop();
+          this.guideBak=Guide.data;               // restorable if a pinch interrupts
+          Guide.reset();
+          for(const q of this.pathBuf){ const w=V.s2w(q.x,q.y); Guide.addRaw(w.x,w.y); }
+        }else{
+          const w=V.s2w(ev.clientX,ev.clientY); Guide.addRaw(w.x,w.y);
+        }
+      }
       return;
     }
 
@@ -1107,11 +1191,25 @@ const Input = {
   up(e){
     this.pointers.delete(e.pointerId);
     if(this.pointers.size<2) this.pinch=null;
+    if(this.consumed===e.pointerId){ this.consumed=null; return; }
     if(this.panning && this.pointers.size===0){ this.panning=false; document.body.style.cursor=this.spaceHeld?'grab':''; }
     if(this.pathing && this.pointers.size===0){
       this.pathing=false;
-      if(Guide.build()){ const s0=Guide.sampleAt(0); S.anchor={x:s0.x,y:s0.y}; UI.toast('PRESS RUN TO TRACE'); }
-      else UI.toast('PATH TOO SHORT');
+      if(this.pathStarted){
+        this.pathStarted=false; this.guideBak=undefined;
+        if(Guide.build()){ const s0=Guide.sampleAt(0); S.anchor={x:s0.x,y:s0.y}; UI.toast('PRESS RUN TO TRACE'); }
+        else UI.toast('PATH TOO SHORT');
+      }
+      // a plain tap in PATH mode leaves the current guide/trace untouched
+    }
+    if(this.tap && this.pointers.size===0){
+      const t=this.tap; this.tap=null;
+      const moved=Math.hypot(e.clientX-t.x, e.clientY-t.y);
+      if(S.mode==='auto' && moved<12 && performance.now()-t.t<450){
+        const w=V.s2w(e.clientX,e.clientY);
+        S.anchor=w;
+        if(Auto.running){ Auto.stop(); Auto.start(); }
+      }
     }
     if(this.drawing && this.pointers.size===0){
       this.drawing=false;
@@ -1252,6 +1350,60 @@ function traceContours(bin, W, H){
   }
   return contours;
 }
+/* Zhang–Suen thinning: reduce filled glyphs to a 1px centreline skeleton,
+   so the pen can travel the stroke of the letter like real handwriting. */
+function thinBin(src, W, H){
+  const img=new Uint8Array(src);
+  const idx=(x,y)=>y*W+x;
+  let changed=true, guard=0;
+  while(changed && ++guard<220){
+    changed=false;
+    for(let pass=0;pass<2;pass++){
+      const del=[];
+      for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++){
+        const i=idx(x,y); if(!img[i]) continue;
+        const p2=img[idx(x,y-1)],p3=img[idx(x+1,y-1)],p4=img[idx(x+1,y)],p5=img[idx(x+1,y+1)],
+              p6=img[idx(x,y+1)],p7=img[idx(x-1,y+1)],p8=img[idx(x-1,y)],p9=img[idx(x-1,y-1)];
+        const B=p2+p3+p4+p5+p6+p7+p8+p9;
+        if(B<2||B>6) continue;
+        let A=0; const seq=[p2,p3,p4,p5,p6,p7,p8,p9,p2];
+        for(let k=0;k<8;k++) if(seq[k]===0&&seq[k+1]===1) A++;
+        if(A!==1) continue;
+        if(pass===0){ if(p2*p4*p6 || p4*p6*p8) continue; }
+        else        { if(p2*p4*p8 || p2*p6*p8) continue; }
+        del.push(i);
+      }
+      if(del.length){ changed=true; for(const i of del) img[i]=0; }
+    }
+  }
+  return img;
+}
+/* Walk a skeleton into polylines: start at endpoints, then sweep leftovers (loops). */
+function skeletonPaths(sk, W, H){
+  const idx=(x,y)=>y*W+x;
+  const at=(x,y)=>(x<0||y<0||x>=W||y>=H)?0:sk[idx(x,y)];
+  const nb=[[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
+  const deg=(x,y)=>{ let n=0; for(const[dx,dy]of nb) if(at(x+dx,y+dy)) n++; return n; };
+  const visited=new Uint8Array(W*H);
+  const paths=[];
+  const walk=(sx,sy)=>{
+    const path=[[sx,sy]]; visited[idx(sx,sy)]=1;
+    let cx=sx, cy=sy;
+    for(let step=0; step<W*H; step++){
+      let nx=-1, ny=-1;
+      for(const[dx,dy] of nb){ const X=cx+dx, Y=cy+dy;
+        if(at(X,Y) && !visited[idx(X,Y)]){ nx=X; ny=Y; break; } }
+      if(nx<0) break;
+      visited[idx(nx,ny)]=1; path.push([nx,ny]); cx=nx; cy=ny;
+    }
+    return path;
+  };
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++)
+    if(sk[idx(x,y)] && !visited[idx(x,y)] && deg(x,y)===1) paths.push(walk(x,y));
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++)
+    if(sk[idx(x,y)] && !visited[idx(x,y)]) paths.push(walk(x,y));
+  return paths.filter(p=>p.length>=8);
+}
 const Text = {
   family:'"Dancing Script", "Segoe Script", cursive',
   async guides(str, worldHeight){
@@ -1271,16 +1423,19 @@ const Text = {
     const data=cx.getImageData(0,0,w,h).data;
     const bin=new Uint8Array(w*h);
     for(let i=0,p=0;i<bin.length;i++,p+=4) bin[i]= data[p]>128?1:0;
-    const contours=traceContours(bin,w,h);
-    if(!contours.length) return [];
+    // CENTER: travel the stroke skeleton like handwriting.
+    // EDGE: travel the outline of each glyph (closed loops).
+    const center = S.textTrace==='center';
+    const polys = center ? skeletonPaths(thinBin(bin,w,h),w,h) : traceContours(bin,w,h);
+    if(!polys.length) return [];
     const scale=(worldHeight||300)/(asc+desc);
     const halfW=w/2, halfH=h/2;
     const ox=V.cam.x, oy=V.cam.y;   // land the text at the current view centre
     const guides=[];
-    for(const c of contours){
+    for(const c of polys){
       const xs=c.map(p=>(p[0]-halfW)*scale+ox);
       const ys=c.map(p=>(p[1]-halfH)*scale+oy);
-      xs.push(xs[0]); ys.push(ys[0]);               // close the loop
+      if(!center){ xs.push(xs[0]); ys.push(ys[0]); }  // outlines are closed loops
       const rs=resamplePts(xs, ys, 3);
       const gd=buildGuideData(rs.xs, rs.ys);
       if(gd && gd.total>6){ let mn=1e9; for(const x of rs.xs) if(x<mn)mn=x; gd.minX=mn; guides.push(gd); }
@@ -1419,7 +1574,8 @@ function exportSVG(){
   for(const {s,la} of visibleStrokes()){
     if(s.pts.length<4) continue;
     let d='M'; for(let i=0;i<s.pts.length;i+=2) d+=(i?' L':'')+s.pts[i].toFixed(1)+' '+s.pts[i+1].toFixed(1);
-    paths+=`<path d="${d}" fill="none" stroke="${s.color}" stroke-width="${s.width}" stroke-linecap="round" stroke-linejoin="round" opacity="${(s.opacity*la).toFixed(2)}"/>`;
+    const dash=dashFor(s);
+    paths+=`<path d="${d}" fill="none" stroke="${s.color}" stroke-width="${s.width}" stroke-linecap="round" stroke-linejoin="round" opacity="${(s.opacity*la).toFixed(2)}"${dash?` stroke-dasharray="${dash[0].toFixed(2)} ${dash[1].toFixed(2)}"`:''}/>`;
   }
   let svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`;
   svg+=`<rect width="${w}" height="${h}" fill="#070708"/><g transform="translate(${ox} ${oy})">`;
@@ -1437,14 +1593,14 @@ const Project = {
     return { v:2, sym:{count:S.symCount,mirror:S.mirror},
       gears:{R:S.R,r:S.r,d:S.d,curve:S.curve,dir:S.dir,speed:S.speed},
       pen:{...S.pen}, layers:Layers.list.map(L=>({name:L.name,visible:L.visible,opacity:L.opacity,blend:L.blend||'normal',
-        strokes:L.strokes.map(s=>({pts:s.pts,color:s.color,width:s.width,opacity:s.opacity,grad:s.grad}))})),
+        strokes:L.strokes.map(s=>({pts:s.pts,color:s.color,width:s.width,opacity:s.opacity,grad:s.grad,style:s.style}))})),
       active:Layers.active, seq:Layers.seq };
   },
   load(obj){
     if(!obj || !obj.layers) return false;
     Layers.list = obj.layers.map(L=>({ name:L.name, visible:L.visible!==false, opacity:L.opacity==null?1:L.opacity, blend:L.blend||'normal',
       strokes:(L.strokes||[]).map(s=>({pts:s.pts, color:s.color, width:s.width, opacity:s.opacity,
-        grad:s.grad||'solid', hsl:hexToHsl(s.color||'#e8e6e1'), path:null})) }));
+        grad:s.grad||'solid', style:s.style||'line', hsl:hexToHsl(s.color||'#e8e6e1'), path:null, _plen:0})) }));
     if(!Layers.list.length) Layers.init();
     Layers.active=Math.min(obj.active||0, Layers.list.length-1);
     Layers.seq=obj.seq||Layers.list.length+1;
@@ -1465,26 +1621,38 @@ const Project = {
 
 /* ---------------- Drawing replay ---------------- */
 const Replay = {
-  running:false, items:[], ii:0, pi:0,
+  running:false, items:[], ii:0, pi:0, pace:1000, carry:0, lastT:0,
   start(){
+    if(Auto.running) Auto.stop(); if(Path.running) Path.stop();
     const items=[];
     for(const L of Layers.list){ if(!L.visible) continue; for(const s of L.strokes) if(s.pts.length>=4) items.push({s,la:L.opacity,blend:L.blend}); }
     if(!items.length){ UI.toast('NOTHING TO REPLAY'); return; }
-    if(Auto.running) Auto.stop(); if(Path.running) Path.stop();
     Renderer.active=null;
     this.items=items; this.ii=0; this.pi=0; this.running=true;
+    // time-based pacing: reveal the whole piece in ~8s regardless of its
+    // size or the device frame rate (small drawings animate, never blink)
+    let totalPairs=0; for(const it of items) totalPairs+=it.s.pts.length/2;
+    this.pace=Math.max(30, totalPairs/8);            // pairs per second
+    this.carry=0; this.lastT=performance.now();
     artX.setTransform(1,0,0,1,0,0); artX.globalCompositeOperation='source-over'; artX.clearRect(0,0,artC.width,artC.height);
     UI.toast('REPLAY');
   },
   stop(){ this.running=false; Renderer.repaintAll(); },
   tick(){
     if(!this.running) return;
-    let budget=900;                       // point-pairs revealed per frame
+    const now=performance.now(), dt=Math.min((now-this.lastT)/1000, 0.25);
+    this.lastT=now;
+    this.carry+=this.pace*dt;
+    let budget=Math.floor(this.carry);    // point-pairs to reveal this tick
+    if(budget<1) return;
+    this.carry-=budget;
+    budget=Math.min(budget, 24000);       // cap per-tick work on huge pieces
     V.apply(artX);
     while(budget>0 && this.ii<this.items.length){
       const it=this.items[this.ii], s=it.s, n=s.pts.length;
       artX.globalCompositeOperation=BLEND[it.blend]||'source-over';
       artX.globalAlpha=s.opacity*it.la; artX.lineWidth=s.width; artX.lineCap='round'; artX.lineJoin='round'; artX.strokeStyle=s.color;
+      Renderer.applyStyle(artX,s,0);
       const from=Math.max(2,this.pi), to=Math.min(n, from+budget*2);
       Renderer.withSym(artX, ()=>{
         if(s.grad && s.grad!=='solid'){ Renderer.strokeGradient(artX,s,from,to); }
@@ -1494,8 +1662,9 @@ const Replay = {
       budget-=(to-from)/2; this.pi=to;
       if(this.pi>=n){ this.ii++; this.pi=0; }
     }
+    Renderer.clearStyle(artX);
     artX.globalCompositeOperation='source-over';
-    if(this.ii>=this.items.length){ this.running=false; UI.toast('REPLAY DONE'); }
+    if(this.ii>=this.items.length){ this.running=false; Renderer.repaintAll(); UI.toast('REPLAY DONE'); }
   }
 };
 
@@ -1569,6 +1738,8 @@ const UI = {
     seg('#gradseg', b=>{ S.pen.grad=b.dataset.grad; });
     seg('#textstyleseg', b=>{ S.textCoil=b.dataset.coil==='1'; });
     seg('#textrepeatseg', b=>{ S.textLoop=b.dataset.tloop==='1'; });
+    seg('#texttraceseg', b=>{ S.textTrace=b.dataset.trace; });
+    seg('#strokeseg', b=>{ S.pen.style=b.dataset.pstyle; });
     seg('#mirrorseg', b=>{ S.mirror=b.dataset.mirror; Renderer.repaintAll(); });
     seg('#blendseg', b=>{ const L=Layers.current(); if(L){ L.blend=b.dataset.blend; Renderer.repaintAll(); } });
 
@@ -1795,6 +1966,7 @@ const UI = {
     document.querySelectorAll('#dirseg button').forEach(x=>x.setAttribute('aria-pressed',+x.dataset.dir===S.dir));
     document.querySelectorAll('#mirrorseg button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.mirror===S.mirror));
     document.querySelectorAll('#gradseg button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.grad===S.pen.grad));
+    document.querySelectorAll('#strokeseg button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.pstyle===S.pen.style));
     document.querySelectorAll('.sw').forEach(x=>x.setAttribute('aria-pressed',x.dataset.c===S.pen.color));
     this.setVal('w',S.pen.width); this.setVal('o',S.pen.opacity);
     this.syncGearTags(); this.renderLayers(); this.syncActiveLayer();
@@ -1806,7 +1978,7 @@ const UI = {
     if(Auto.running) Auto.stop();
     if(Path.running) Path.stop();
     if(Input.drawing){ Session.end(); Input.drawing=false; }
-    Input.pathing=false;
+    Input.pathing=false; Input.pathStarted=false; Input.guideBak=undefined; Input.tap=null;
     S.mode=m;
     this.$('mode-draw').setAttribute('aria-pressed',m==='draw');
     this.$('mode-path').setAttribute('aria-pressed',m==='path');
@@ -1849,6 +2021,7 @@ const UI = {
   },
   syncPlay(){
     const on=Auto.running||Path.running;
+    document.body.classList.toggle('playing',on);
     this.$('playbtn').classList.toggle('playing',on);
     this.$('playbtn').setAttribute('aria-pressed',on);
     this.$('playlabel').textContent=on?'PAUSE':(S.mode==='path'?'TRACE':'RUN');
@@ -1930,6 +2103,10 @@ V.resize();
 Input.init();
 UI.init();
 requestAnimationFrame(frame);
+// touch-appropriate empty-state hint (no scroll wheel / spacebar on a phone)
+if(matchMedia('(pointer:coarse)').matches){
+  UI.$('hint').innerHTML='DRAG TO GUIDE THE MECHANISM<br><span style="opacity:.6">PINCH TO ZOOM · DOUBLE-TAP TO PAUSE</span>';
+}
 setTimeout(()=>UI.dismissHint(),6000);
 </script>
 </body>
